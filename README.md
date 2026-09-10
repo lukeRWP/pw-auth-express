@@ -80,6 +80,8 @@ ALTER TABLE users ADD COLUMN SUB VARCHAR(26) NULL, ADD UNIQUE INDEX UQ_USERS_SUB
 
 `pwAuth.mysqlSession(db, { table, columns })` — `db.query(sql, params)` may return rows or mysql2's `[rows, fields]`.
 
+Call `auth.sweepExpiredSessions()` on an interval (e.g. hourly); the shim never deletes expired rows on its own.
+
 ## Develop
 
 `npm ci --no-audit && npm test` (node:test against an in-process fake issuer; no network).

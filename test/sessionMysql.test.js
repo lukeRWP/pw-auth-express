@@ -53,6 +53,14 @@ test('destroy / destroyBySid / destroyBySub return affected counts from either r
   ]);
 });
 
+test('deleteExpired removes every row at or past the given instant and returns the count', async () => {
+  const db = fakeDb([{ affectedRows: 4 }]);
+  const when = new Date('2026-09-10T00:00:00Z');
+  assert.equal(await mysqlSession(db).deleteExpired(when), 4);
+  assert.equal(db.calls[0].sql, 'DELETE FROM `sessions` WHERE `EXPIRES_AT` <= ?');
+  assert.deepEqual(db.calls[0].params, [when]);
+});
+
 test('a schema-qualified table is backticked part by part; empty or unsafe parts are rejected', async () => {
   const db = fakeDb([{ affectedRows: 1 }]);
   await mysqlSession(db, { table: 'TALLY.sessions' }).destroy('x');
