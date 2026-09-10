@@ -22,6 +22,14 @@ test('seal/open round-trips objects and refuses tampering', () => {
   assert.throws(() => open(sealKey, 'garbage'), /unsealable/);
 });
 
+test('open() rejects sealed blobs with extra or missing segments', () => {
+  const { sealKey } = deriveKeys('s3cret');
+  const s = seal(sealKey, { x: 1 });
+  assert.throws(() => open(sealKey, s + '.x'), /unsealable/);
+  const parts = s.split('.'); parts.pop();
+  assert.throws(() => open(sealKey, parts.join('.')), /unsealable/);
+});
+
 test('randomToken: 64 hex, unique', () => {
   const t = randomToken();
   assert.match(t, /^[0-9a-f]{64}$/);
