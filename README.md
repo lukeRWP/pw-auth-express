@@ -65,6 +65,7 @@ async function resolveUser(c) {
 
 - Access tokens are opaque and never checked locally; roles come from the ID token at login and every refresh. A role change lands within 15 minutes.
 - Only `invalid_grant` from the issuer ends a session. A pwiam outage (5xx/timeout) serves the last-known session and retries once a minute — apps keep working; `logger.error` lines say `serving the stale session`.
+- `requireAcr` asks for a step-up login once (401 `step_up_required`, or a 302 for a browser). If the issuer answers without the requested `acr`, the login still succeeds but the guarded route then answers `403 { error: 'step_up_failed', acr }` — terminal, so a pwiam that cannot do `webauthn` produces an error page, not a redirect loop. The next successful step-up login clears it.
 - API-key verdicts cache 60 s and survive a pwiam outage for 5 more minutes.
 - Back-channel logout ends sessions by `sid`, or all of a user's sessions by `sub`.
 

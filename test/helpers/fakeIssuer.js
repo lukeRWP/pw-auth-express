@@ -18,7 +18,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
 
   const F = {
     issuer, jwk, clientId, clientSecret, accessTtl,
-    calls: [], fail: new Set(), refreshIdToken: true,
+    calls: [], fail: new Set(), refreshIdToken: true, ignoreAcr: false,
     user: { sub: '01HUSERAAAAAAAAAAAAAAAAAAA', name: 'Ada Lovelace', email: 'ada@example.com', roles: ['user'], entra_oid: 'oid-ada' },
     apiKeys: new Map(),
     codes: new Map(),     // code -> { challenge, redirectUri, nonce, acr, amr, authTime, sid }
@@ -118,7 +118,8 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
         res.writeHead(302, { location: back.href }); return res.end();
       }
       const code = crypto.randomBytes(16).toString('base64url');
-      const acr = query.acr_values || 'pwd-otp';
+      // acr_values is a request, not a command: F.ignoreAcr models an issuer that cannot honour it
+      const acr = (F.ignoreAcr ? undefined : query.acr_values) || 'pwd-otp';
       F.codes.set(code, { challenge: query.code_challenge, redirectUri: query.redirect_uri, nonce: query.nonce, acr,
         amr: acr === 'webauthn' ? ['webauthn'] : ['pwd', 'otp'], authTime: nowSec(), sid: `sid-${++F.sidCounter}` });
       back.searchParams.set('code', code); back.searchParams.set('state', query.state);

@@ -7,7 +7,7 @@ const { startApp, agent, loginVia } = require('./helpers/app');
 let F;
 before(async () => { F = await startFakeIssuer(); });
 after(() => F.close());
-beforeEach(() => { F.calls.length = 0; F.fail.clear(); F.user.roles = ['user']; });
+beforeEach(() => { F.calls.length = 0; F.fail.clear(); F.user.roles = ['user']; F.ignoreAcr = false; });
 
 const extend = (app, auth) => {
   app.get('/admin/danger', auth.requireAcr('webauthn', { maxAge: 300 }), (req, res) => res.json({ ok: true, acr: req.auth.acr }));
@@ -41,6 +41,43 @@ test('requireAcr: pwd-otp session is told to step up; after a webauthn login it 
     assert.equal((await a.req('/admin/danger')).status, 401, 'auth_time older than max_age');
     assert.equal((await a.req('/admin/any-age')).status, 200, 'acr alone still satisfied');
     assert.equal((await a.req('/admin/danger', { headers: { cookie: '' } })).status, 401);
+  } finally { await app.close(); }
+});
+
+test('requireAcr: an issuer that ignores acr_values gets exactly one step-up attempt, then a terminal 403 — never a redirect loop', async () => {
+  const clock = { t: Date.now() };
+  const app = await startApp({ F, extend, options: { now: () => clock.t } });
+  const refreshes = () => F.calls.filter((c) => c.path === '/token' && c.body.grant_type === 'refresh_token').length;
+  const authorizes = () => F.calls.filter((c) => c.path === '/authorize').length;
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F);
+    const first = await a.req('/admin/danger', { headers: { accept: 'text/html' } });
+    assert.equal(first.status, 302);
+    // the issuer answers the step-up with pwd-otp anyway
+    F.ignoreAcr = true;
+    const cb = await loginVia(a, F, first.headers.get('location'));
+    assert.equal(cb.headers.get('location'), '/admin/danger', 'the login itself succeeded');
+    const denied = await a.req('/admin/danger');
+    assert.equal(denied.status, 403);
+    assert.deepEqual(await denied.json(), { error: 'step_up_failed', acr: 'webauthn' });
+    assert.equal(denied.headers.get('cache-control'), 'no-store');
+    const n = authorizes();
+    const again = await a.req('/admin/danger', { headers: { accept: 'text/html' } });
+    assert.equal(again.status, 403, 'a browser is not redirected back into the loop either');
+    assert.deepEqual(await again.json(), { error: 'step_up_failed', acr: 'webauthn' });
+    assert.equal(authorizes(), n, 'no second authorization request');
+    // the marker rides through a silent refresh
+    const r = refreshes();
+    clock.t += 880 * 1000;
+    assert.equal((await a.req('/admin/danger')).status, 403);
+    assert.equal(refreshes(), r + 1, 'the session did refresh');
+    // ...and is cleared by the next successful step-up login
+    clock.t = Date.now();
+    F.ignoreAcr = false;
+    await loginVia(a, F, '/api/auth/login?acr=webauthn&max_age=300');
+    const ok = await a.req('/admin/danger');
+    assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, acr: 'webauthn' });
   } finally { await app.close(); }
 });
 
