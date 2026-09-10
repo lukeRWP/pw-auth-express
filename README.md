@@ -72,6 +72,37 @@ async function resolveUser(c) {
 
 ## Session table (MySQL)
 
+The adapter reads and writes exactly these six columns (rename any of them with `columns`):
+
+| column | type | holds |
+|---|---|---|
+| `TOKEN` | `CHAR(64)` primary key | the opaque session token from the cookie |
+| `USER_ID` | the app's own user id type | whatever `resolveUser` returned as `id` |
+| `SUB` | `VARCHAR(64) NULL` | pwiam subject — back-channel logout by user |
+| `SID` | `VARCHAR(64) NULL` | pwiam session id — back-channel logout by session |
+| `EXPIRES_AT` | `DATETIME NOT NULL` | absolute session expiry (`sessionMaxAge`) |
+| `IAM_STATE` | `TEXT NULL` | the sealed blob: refresh/access/ID tokens, roles, user snapshot |
+
+`create()` inserts those six and nothing else, so any **other** `NOT NULL` column without a default on the app's table will break it.
+
+Greenfield:
+
+```sql
+CREATE TABLE sessions (
+  TOKEN CHAR(64) NOT NULL PRIMARY KEY,
+  USER_ID BIGINT NOT NULL,
+  SUB VARCHAR(64) NULL,
+  SID VARCHAR(64) NULL,
+  EXPIRES_AT DATETIME NOT NULL,
+  IAM_STATE TEXT NULL,
+  INDEX IDX_SESSIONS_SID (SID),
+  INDEX IDX_SESSIONS_SUB (SUB),
+  INDEX IDX_SESSIONS_EXPIRES_AT (EXPIRES_AT)
+);
+```
+
+An app that already has a `sessions` table:
+
 ```sql
 ALTER TABLE sessions
   ADD COLUMN SUB VARCHAR(64) NULL, ADD COLUMN SID VARCHAR(64) NULL, ADD COLUMN IAM_STATE TEXT NULL,
@@ -79,7 +110,9 @@ ALTER TABLE sessions
 ALTER TABLE users ADD COLUMN SUB VARCHAR(26) NULL, ADD UNIQUE INDEX UQ_USERS_SUB (SUB);
 ```
 
-`pwAuth.mysqlSession(db, { table, columns })` — `db.query(sql, params)` may return rows or mysql2's `[rows, fields]`.
+`pwAuth.mysqlSession(db, { table, columns })` — `db.query(sql, params)` may return rows or mysql2's `[rows, fields]`. `table` accepts `schema.table` (e.g. `'TALLY.sessions'`).
+
+Every expiry comparison binds a JS `Date`, so the pool wants `timezone: '+00:00'` and `dateStrings: false` — otherwise the driver and the column disagree about what the timestamp means.
 
 Call `auth.sweepExpiredSessions()` on an interval (e.g. hourly); the shim never deletes expired rows on its own.
 
