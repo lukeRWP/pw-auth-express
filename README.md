@@ -36,7 +36,7 @@ const url = auth.loginUrl({ returnTo: '/reports', acr: 'webauthn', maxAge: 300 }
 await auth.close();                              // on shutdown: closes the session adapter if it has close()
 ```
 
-`resolveUser(claims, { tokens })` must return the app's user row (becomes `req.user`) or `null` to refuse the login. It runs at login and on every token refresh (~15 min). Pattern for apps migrating from Entra-direct login:
+`resolveUser(claims, { tokens })` must return the app's user row (becomes `req.user`) or `null` to refuse the login. It runs at login and on every token refresh (~15 min). Whatever it returns is sealed into the session row **and** served verbatim by `GET /api/auth/session` — return a projection, not a raw DB row with a password hash in it. Pattern for apps migrating from Entra-direct login:
 
 ```js
 async function resolveUser(c) {
@@ -68,7 +68,10 @@ async function resolveUser(c) {
 - Only `invalid_grant` from the issuer ends a session. A pwiam outage (5xx/timeout) serves the last-known session and retries once a minute — apps keep working; `logger.error` lines say `serving the stale session`.
 - `requireAcr` asks for a step-up login once (401 `step_up_required`, or a 302 for a browser). If the issuer answers without the requested `acr`, the login still succeeds but the guarded route then answers `403 { error: 'step_up_failed', acr }` — terminal, so a pwiam that cannot do `webauthn` produces an error page, not a redirect loop. The next successful step-up login clears it.
 - API-key verdicts cache 60 s and survive a pwiam outage for 5 more minutes.
-- Back-channel logout ends sessions by `sid`, or all of a user's sessions by `sub`.
+- Back-channel logout ends sessions by `sid`; a token carrying both uses `sid` and leaves the user's other sessions alone. `sub` alone ends all of them.
+- The refresh mutex and the back-channel `jti` guard are per-process. Scale out and both weaken: a replayed `jti` becomes an idempotent no-op on another instance (still safe), but two instances refreshing one session can race and get the whole refresh family revoked.
+- Discovery metadata is fetched once and cached for the life of the process — moving a pwiam endpoint needs an app restart, not just a pwiam deploy.
+- Two logins started at once in one browser share the one state cookie: the second overwrites it, so the first callback loses — `login failed — code exchange`, and the user simply logs in again.
 
 ## Session table (MySQL)
 
