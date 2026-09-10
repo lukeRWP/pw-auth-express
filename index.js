@@ -28,6 +28,9 @@ function pwAuth(options = {}) {
   return {
     routes: () => createRoutes(ctx, mw),
     requireAuth: mw.requireAuth,
+    requireAcr: mw.requireAcr,
+    requireApiKey: mw.requireApiKey,
+    getUpstreamToken: mw.getUpstreamToken,
     loginUrl: mw.loginUrl,
     close: async () => { if (typeof o.session.close === 'function') await o.session.close(); },
   };
