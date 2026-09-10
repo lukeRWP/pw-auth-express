@@ -164,7 +164,11 @@ test('requireApiKey under bypassAuth yields a dev service-account principal', as
 test('requireApiKey: the introspection cache is bounded — past the cap the oldest entry is evicted and re-introspected', async () => {
   const app = await startApp({ F, extend });
   try {
-    const CAP = 1000; // matches KEY_CACHE_MAX in lib/middleware.js (not exported — kept behavioural per Ruling 14)
+    // CAP matches KEY_CACHE_MAX in lib/middleware.js (not exported — kept behavioural per Ruling 14).
+    // This test runs on the real clock, so the 1001 requests below must finish inside KEY_CACHE_MS
+    // (60 s): overrun it and cache-test-0 is re-introspected because its verdict went stale rather
+    // than because the cap evicted it — a PASS for the wrong reason, not a flake. Currently ~4 s.
+    const CAP = 1000;
     for (let i = 0; i <= CAP; i++) {
       const key = `cache-test-${i}`;
       F.apiKeys.set(key, { active: true, sub: `sa:${i}`, service_account: { id: `id${i}`, name: `n${i}`, kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: `k${i}`, exp: Math.floor(Date.now() / 1000) + 3600 });
