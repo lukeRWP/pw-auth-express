@@ -110,6 +110,20 @@ test('callback: issuer access_denied, resolveUser throwing, resolveUser returnin
   } finally { await app.close(); }
 });
 
+test('callback: a token response without expires_in is a failed login, not a zero-lifetime session', async () => {
+  const logs = [];
+  const app = await startApp({ F, options: { logger: { info() {}, warn: (m) => logs.push(m), error: (m) => logs.push(m) } } });
+  try {
+    F.fail.add('no_expires_in');
+    const a = agent(app.baseUrl);
+    const cb = await loginVia(a, F);
+    assert.equal(cb.status, 302); assert.equal(cb.headers.get('location'), '/login?error=auth_failed');
+    assert.ok(!cb.headers.getSetCookie().some((c) => c.startsWith('session_token=')), 'no session cookie');
+    assert.equal(logs.length, 1); assert.match(logs[0], /expires_in/);
+    assert.equal((await a.req('/api/me')).status, 401);
+  } finally { await app.close(); }
+});
+
 test('logout: destroys the session, clears the cookie, sends the browser to the issuer end-session with id_token_hint; json callers get { redirect }', async () => {
   const app = await startApp({ F });
   try {

@@ -79,6 +79,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
     const refreshToken = crypto.randomBytes(24).toString('base64url');
     F.refresh.set(refreshToken, { family, used: false, sid, acr, amr, authTime });
     const body = { access_token: accessToken, token_type: 'Bearer', expires_in: F.accessTtl, refresh_token: refreshToken, scope: 'openid' };
+    if (F.fail.has('no_expires_in')) delete body.expires_in;
     if (nonce !== undefined || F.refreshIdToken) {
       const claims = { iss: issuer, aud: clientId, sub: F.user.sub, iat: now, exp: now + 900, sid, acr, amr, auth_time: authTime,
         name: F.user.name, email: F.user.email, roles: F.user.roles, entra_oid: F.user.entra_oid };
