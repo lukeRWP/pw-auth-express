@@ -9,7 +9,7 @@ async function startApp({ F, resolveUser, options = {}, extend } = {}) {
   const baseUrl = `http://127.0.0.1:${server.address().port}`;
   const auth = pwAuth({
     issuer: F.issuer, clientId: F.clientId, clientSecret: F.clientSecret, allowInsecure: true, baseUrl,
-    secret: 'app-cookie-secret', session: pwAuth.memorySession(), cookie: { secure: false },
+    secret: 'app-cookie-secret'.padEnd(32, '.'), session: pwAuth.memorySession(), cookie: { secure: false },
     resolveUser: resolveUser || (async (c) => ({ id: 42, name: c.name, roles: c.roles })),
     logger: { info() {}, warn() {}, error() {} },
     ...options,

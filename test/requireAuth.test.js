@@ -16,7 +16,7 @@ after(() => F.close());
 beforeEach(() => { F.calls.length = 0; F.fail.clear(); F.user.roles = ['user']; F.refreshIdToken = true; });
 
 function makeCtx({ resolveUser, bypassAuth = false } = {}) {
-  const keys = deriveKeys('s3cret');
+  const keys = deriveKeys('s3cret'.padEnd(32, '.'));
   const adapter = memorySession();
   const store = createSessionStore({ adapter, sealKey: keys.sealKey });
   const clock = { t: Date.now() };
@@ -76,7 +76,7 @@ test('bad signature / unknown token → 401 and the cookie is cleared', async ()
   const r = await run(t.mw.requireAuth, { cookie: 'session_token=deadbeef.notasig' });
   assert.equal(r.status, 401); assert.match(r.headers['set-cookie'][0], /^session_token=; Max-Age=0/);
   const s = await seed(t);
-  const r2 = await run(t.mw.requireAuth, { cookie: `session_token=${signValue(deriveKeys('other').cookieKey, s.token)}` });
+  const r2 = await run(t.mw.requireAuth, { cookie: `session_token=${signValue(deriveKeys('other'.padEnd(32, '.')).cookieKey, s.token)}` });
   assert.equal(r2.status, 401);
 });
 
@@ -166,7 +166,7 @@ test('resolveUser returning null on refresh ends the session', async () => {
 test('unsealable session state (rotated secret) → 401 and the row is removed', async () => {
   const t = makeCtx();
   const s = await seed(t);
-  await t.adapter.update(s.token, { state: seal(deriveKeys('rotated').sealKey, { anything: 1 }) });
+  await t.adapter.update(s.token, { state: seal(deriveKeys('rotated'.padEnd(32, '.')).sealKey, { anything: 1 }) });
   const r = await run(t.mw.requireAuth, { cookie: s.cookie });
   assert.equal(r.status, 401); assert.equal(await t.adapter.get(s.token), null);
 });

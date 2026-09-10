@@ -51,7 +51,7 @@ async function resolveUser(c) {
 
 | option | default | notes |
 |---|---|---|
-| `issuer`, `clientId`, `clientSecret`, `baseUrl`, `secret`, `session`, `resolveUser` | — | required |
+| `issuer`, `clientId`, `clientSecret`, `baseUrl`, `secret`, `session`, `resolveUser` | — | required; `secret` must be ≥32 chars |
 | `redirectPath` | `/api/auth/callback` | must match the client's registered redirect URI (pw.json `iam.redirectUris`) |
 | `routePrefix` | `/api/auth` | |
 | `postLoginRedirect` / `loginErrorRedirect` / `postLogoutRedirect` | `/`, `/login?error=auth_failed`, `/` | |

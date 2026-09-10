@@ -2,7 +2,7 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const pwAuth = require('../index');
 
-const base = { issuer: 'https://id.example.com', clientId: 'a-prod', clientSecret: 's', baseUrl: 'https://a.example.com', secret: 'x', session: pwAuth.memorySession(), resolveUser: async () => ({ id: 1 }) };
+const base = { issuer: 'https://id.example.com', clientId: 'a-prod', clientSecret: 's', baseUrl: 'https://a.example.com', secret: 'x'.padEnd(32, '.'), session: pwAuth.memorySession(), resolveUser: async () => ({ id: 1 }) };
 
 test('pwAuth: required options, defaults, surface', () => {
   for (const k of Object.keys(base)) {

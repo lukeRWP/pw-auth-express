@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const { deriveKeys } = require('../lib/crypto');
 const { readCookies, signValue, unsignValue, setCookie, clearCookie } = require('../lib/cookies');
 
-const { cookieKey } = deriveKeys('s3cret');
+const { cookieKey } = deriveKeys('s3cret'.padEnd(32, '.'));
 function fakeRes() { const h = {}; return { getHeader: (n) => h[n.toLowerCase()], setHeader: (n, v) => { h[n.toLowerCase()] = v; }, _h: h }; }
 
 test('sign/unsign: valid round-trip, tamper → null, wrong key → null', () => {
@@ -11,7 +11,7 @@ test('sign/unsign: valid round-trip, tamper → null, wrong key → null', () =>
   assert.match(s, /^abc\.[A-Za-z0-9_-]+$/);
   assert.equal(unsignValue(cookieKey, s), 'abc');
   assert.equal(unsignValue(cookieKey, 'abd' + s.slice(3)), null);
-  assert.equal(unsignValue(deriveKeys('x').cookieKey, s), null);
+  assert.equal(unsignValue(deriveKeys('x'.padEnd(32, '.')).cookieKey, s), null);
   assert.equal(unsignValue(cookieKey, 'nodot'), null);
   assert.equal(unsignValue(cookieKey, undefined), null);
 });
