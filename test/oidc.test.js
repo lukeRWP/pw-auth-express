@@ -76,7 +76,7 @@ test('refresh: no id_token in the response → claims null (caller falls back to
   F.user.roles = ['ops'];
   const ui = await oidc.userinfo(r.accessToken, F.user.sub);
   assert.deepEqual(ui.roles, ['ops']); assert.equal(ui.sub, F.user.sub);
-  await assert.rejects(oidc.userinfo('not-a-token', F.user.sub), OidcError);
+  await assert.rejects(oidc.userinfo('not-a-token', F.user.sub), (e) => e instanceof OidcError && e.status === 401);
 });
 
 test('refresh: issuer 5xx and connection refused are issuer_error, not invalid_grant', async () => {
