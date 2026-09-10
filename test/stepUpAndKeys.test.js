@@ -35,7 +35,9 @@ test('requireAcr: pwd-otp session is told to step up; after a webauthn login it 
     assert.equal(az.acr_values, 'webauthn'); assert.equal(az.max_age, '300'); assert.equal(az.prompt, 'login');
     const ok = await a.req('/admin/danger');
     assert.equal(ok.status, 200); assert.deepEqual(await ok.json(), { ok: true, acr: 'webauthn' });
-    clock.t += 301 * 1000;
+    const { auth } = await (await a.req('/api/me')).json();
+    // re-anchor on the issuer's real-clock auth_time so the +301 s is exact on a slow runner
+    clock.t = auth.authTime * 1000 + 301 * 1000;
     assert.equal((await a.req('/admin/danger')).status, 401, 'auth_time older than max_age');
     assert.equal((await a.req('/admin/any-age')).status, 200, 'acr alone still satisfied');
     assert.equal((await a.req('/admin/danger', { headers: { cookie: '' } })).status, 401);
