@@ -113,6 +113,13 @@ test('requireApiKey: header/kind/active checks, 60s cache, grace on issuer outag
     clock.t += 61 * 1000; F.fail.add('introspect');
     assert.equal((await call('pk-print')).status, 200);
     assert.equal(logs.length, 1); assert.match(logs[0], /serving the cached verdict/);
+    // ...and the failure is backed off: a blackholed issuer is not re-dialled on every request
+    const failed = introspects();
+    for (let i = 0; i < 4; i++) assert.equal((await call('pk-print')).status, 200);
+    assert.equal(introspects(), failed, 'no retry inside the 60s backoff');
+    clock.t += 61 * 1000;
+    assert.equal((await call('pk-print')).status, 200);
+    assert.equal(introspects(), failed + 1, 'exactly one retry after the backoff');
     // never-seen key during the outage: 503
     assert.equal((await call('pk-new')).status, 503);
     // beyond grace: 503
