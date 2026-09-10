@@ -130,6 +130,20 @@ test('requireApiKey: header/kind/active checks, 60s cache, grace on issuer outag
   } finally { await app.close(); }
 });
 
+test('requireApiKey: a verdict is not reused past its own exp, even inside the 60s cache window', async () => {
+  const clock = { t: Date.now() };
+  const app = await startApp({ F, extend, options: { now: () => clock.t } });
+  F.apiKeys.set('pk-short', { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(clock.t / 1000) + 5 });
+  try {
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-short' } });
+    assert.equal((await call()).status, 200);
+    const n = introspects();
+    clock.t += 6 * 1000;
+    assert.equal((await call()).status, 200);
+    assert.equal(introspects(), n + 1, 'the verdict expired before the cache window did');
+  } finally { await app.close(); }
+});
+
 test('requireApiKey: wrong client secret (invalid_client) is a 503, not a 401 for the caller', async () => {
   const app = await startApp({ F, extend, options: { clientSecret: 'wrong' } });
   F.apiKeys.set('pk-print', { active: true, sub: 'sa:x', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: 0 });
