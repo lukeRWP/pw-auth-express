@@ -53,6 +53,13 @@ test('destroy / destroyBySid / destroyBySub return affected counts from either r
   ]);
 });
 
+test('a schema-qualified table is backticked part by part; empty or unsafe parts are rejected', async () => {
+  const db = fakeDb([{ affectedRows: 1 }]);
+  await mysqlSession(db, { table: 'TALLY.sessions' }).destroy('x');
+  assert.equal(db.calls[0].sql, 'DELETE FROM `TALLY`.`sessions` WHERE `TOKEN` = ?');
+  for (const bad of ['a..b', '.x', 'x.', 'TALLY.sess;ions']) assert.throws(() => mysqlSession(db, { table: bad }), /identifier/, bad);
+});
+
 test('custom table/columns are honoured; bad identifiers are rejected at construction', async () => {
   const db = fakeDb([{ affectedRows: 1 }]);
   await mysqlSession(db, { table: 'app_sessions', columns: { token: 'tok', expiresAt: 'expires' } }).destroy('x');
