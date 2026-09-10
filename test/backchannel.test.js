@@ -38,6 +38,18 @@ test('logout_token with sub (no sid) ends every session of that user', async () 
   } finally { await app.close(); }
 });
 
+test('a body the parser refuses is still answered in the back-channel shape, uncacheable', async () => {
+  const app = await startApp({ F });
+  try {
+    const r = await fetch(`${app.baseUrl}/api/auth/backchannel-logout`, {
+      method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded' }, body: `logout_token=${'x'.repeat(20 * 1024)}`,
+    });
+    assert.equal(r.status, 400);
+    assert.deepEqual(await r.json(), { error: 'invalid_request', message: 'malformed body' });
+    assert.equal(r.headers.get('cache-control'), 'no-store');
+  } finally { await app.close(); }
+});
+
 test('rejects: empty body, garbage, wrong audience, stale iat, nonce present, missing events; replayed jti', async () => {
   const logs = [];
   const app = await startApp({ F, options: { logger: { info() {}, warn: (m) => logs.push(m), error: (m) => logs.push(m) } } });
@@ -57,6 +69,7 @@ test('rejects: empty body, garbage, wrong audience, stale iat, nonce present, mi
       const r = await post(app, t);
       assert.equal(r.status, 400, `expected 400 for ${String(t).slice(0, 20)}`);
       assert.equal((await r.json()).error, 'invalid_request');
+      assert.equal(r.headers.get('cache-control'), 'no-store', 'every answer is uncacheable');
     }
     assert.equal((await a.req('/api/me')).status, 200, 'no rejected token touched the session');
     const good = await F.logoutToken({ sid, jti: 'once' });
