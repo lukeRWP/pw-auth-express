@@ -159,3 +159,22 @@ test('a second login from a browser that already has a session replaces it (old 
     assert.equal(stale.status, 401);
   } finally { await app.close(); }
 });
+
+test('return_to that is not a same-origin path is dropped: never reaches the authorization request, callback always lands on the default postLoginRedirect', async () => {
+  const app = await startApp({ F });
+  try {
+    for (const badReturnTo of ['https://evil.com', '//evil.com', '/\\evil.com', 'evil']) {
+      const a = agent(app.baseUrl);
+      // composed inline (not via loginVia) so we can inspect the authorization URL itself, not just the final callback
+      const r1 = await a.req(`/api/auth/login?return_to=${encodeURIComponent(badReturnTo)}`, { headers: { accept: 'text/html' } });
+      assert.equal(r1.status, 302);
+      const authorizeLocation = r1.headers.get('location');
+      assert.ok(!authorizeLocation.includes(badReturnTo), `authorization URL must not carry the attacker return_to (${badReturnTo})`);
+      assert.ok(!authorizeLocation.includes(encodeURIComponent(badReturnTo)), `authorization URL must not carry the encoded attacker return_to (${badReturnTo})`);
+      const cbUrl = await F.authorize(authorizeLocation);
+      const cb = await a.req(cbUrl, { headers: { accept: 'text/html' } });
+      assert.equal(cb.status, 302);
+      assert.equal(cb.headers.get('location'), '/', `callback must fall back to postLoginRedirect for return_to=${badReturnTo}`);
+    }
+  } finally { await app.close(); }
+});
