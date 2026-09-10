@@ -15,7 +15,7 @@ function pwAuth(options = {}) {
   const o = {
     redirectPath: '/api/auth/callback', routePrefix: '/api/auth',
     postLoginRedirect: '/', loginErrorRedirect: '/login?error=auth_failed', postLogoutRedirect: '/',
-    sessionMaxAge: 24 * 60 * 60 * 1000,
+    sessionMaxAge: 24 * 60 * 60 * 1000, timeoutSec: 10,
     bypassAuth: process.env.BYPASS_AUTH === 'true',
     logger: console, fetch: undefined, now: Date.now, allowInsecure: false,
     ...options,
@@ -23,7 +23,7 @@ function pwAuth(options = {}) {
   };
   if (o.bypassAuth) o.logger.warn('pw-auth: BYPASS_AUTH is ON — all authentication is disabled; never run this in production');
   const keys = deriveKeys(o.secret);
-  const oidc = createOidc({ issuer: o.issuer, clientId: o.clientId, clientSecret: o.clientSecret, fetch: o.fetch, allowInsecure: o.allowInsecure, now: o.now });
+  const oidc = createOidc({ issuer: o.issuer, clientId: o.clientId, clientSecret: o.clientSecret, fetch: o.fetch, allowInsecure: o.allowInsecure, timeoutSec: o.timeoutSec, now: o.now });
   const store = createSessionStore({ adapter: o.session, sealKey: keys.sealKey, now: o.now });
   const ctx = { o, keys, oidc, store, redirectUri: new URL(o.redirectPath, o.baseUrl).href, log: o.logger };
   const mw = createMiddleware(ctx);

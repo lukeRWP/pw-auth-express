@@ -190,6 +190,18 @@ test('requireApiKey: concurrent requests for the same cold key share one introsp
   } finally { await app.close(); }
 });
 
+test('timeoutSec reaches the issuer client: a hung pwiam is given up on, not waited out', async () => {
+  // never resolves; only the abort signal ends it — so the wait IS the configured timeout
+  const hung = (url, init) => new Promise((resolve, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason)));
+  const app = await startApp({ F, extend, options: { timeoutSec: 0.05, fetch: hung } });
+  try {
+    const t0 = Date.now();
+    const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-print' } });
+    assert.equal(r.status, 503);
+    assert.ok(Date.now() - t0 < 2000, `bounded by timeoutSec, not the 10s default (took ${Date.now() - t0}ms)`);
+  } finally { await app.close(); }
+});
+
 test('getUpstreamToken: exchanges the session access token once per hour; errors without a user session', async () => {
   const app = await startApp({ F, extend });
   try {

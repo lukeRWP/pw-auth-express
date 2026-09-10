@@ -58,6 +58,7 @@ async function resolveUser(c) {
 | `sessionMaxAge` | 86400000 (24 h) | cookie + row lifetime; pwiam's refresh token (30 d) outlives it |
 | `cookie` | `{ name: 'session_token', secure: true }` | |
 | `bypassAuth` | `process.env.BYPASS_AUTH === 'true'` | dev only: `req.user = resolveUser(DEV_CLAIMS)`, `/login` → 503 |
+| `timeoutSec` | `10` | per-request timeout on every call to pwiam (discovery, token, introspection, upstream) |
 | `logger` | `console` | needs `info/warn/error` |
 | `now`, `fetch`, `allowInsecure` | `Date.now`, global, `false` | test hooks |
 
