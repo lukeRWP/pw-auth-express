@@ -21,6 +21,7 @@ function pwAuth(options = {}) {
     ...options,
     cookie: { name: 'session_token', secure: true, ...(options.cookie || {}) },
   };
+  if (o.bypassAuth) o.logger.warn('pw-auth: BYPASS_AUTH is ON — all authentication is disabled; never run this in production');
   const keys = deriveKeys(o.secret);
   const oidc = createOidc({ issuer: o.issuer, clientId: o.clientId, clientSecret: o.clientSecret, fetch: o.fetch, allowInsecure: o.allowInsecure, now: o.now });
   const store = createSessionStore({ adapter: o.session, sealKey: keys.sealKey, now: o.now });

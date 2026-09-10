@@ -16,6 +16,16 @@ test('pwAuth: required options, defaults, surface', () => {
   assert.equal(typeof pwAuth.memorySession, 'function');
 });
 
+test('bypassAuth says so once, loudly, at construction', () => {
+  const warns = [];
+  const logger = { info() {}, warn: (m) => warns.push(m), error() {} };
+  pwAuth({ ...base, bypassAuth: true, logger });
+  assert.equal(warns.length, 1); assert.match(warns[0], /BYPASS_AUTH is ON/);
+  warns.length = 0;
+  pwAuth({ ...base, logger });
+  assert.deepEqual(warns, [], 'silent when authentication is real');
+});
+
 test('sweepExpiredSessions deletes the rows the injected clock has passed, and only those', async () => {
   const clock = { t: Date.now() };
   const session = pwAuth.memorySession();
