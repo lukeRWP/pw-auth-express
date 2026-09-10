@@ -21,7 +21,7 @@ function pwAuth(options = {}) {
     cookie: { name: 'session_token', secure: true, ...(options.cookie || {}) },
   };
   const keys = deriveKeys(o.secret);
-  const oidc = createOidc({ issuer: o.issuer, clientId: o.clientId, clientSecret: o.clientSecret, fetch: o.fetch, allowInsecure: o.allowInsecure });
+  const oidc = createOidc({ issuer: o.issuer, clientId: o.clientId, clientSecret: o.clientSecret, fetch: o.fetch, allowInsecure: o.allowInsecure, now: o.now });
   const store = createSessionStore({ adapter: o.session, sealKey: keys.sealKey, now: o.now });
   const ctx = { o, keys, oidc, store, redirectUri: new URL(o.redirectPath, o.baseUrl).href, log: o.logger };
   const mw = createMiddleware(ctx);

@@ -101,6 +101,35 @@ test('requireApiKey under bypassAuth yields a dev service-account principal', as
   } finally { await app.close(); }
 });
 
+test('requireApiKey: the introspection cache is bounded — past the cap the oldest entry is evicted and re-introspected', async () => {
+  const app = await startApp({ F, extend });
+  try {
+    const CAP = 1000; // matches KEY_CACHE_MAX in lib/middleware.js (not exported — kept behavioural per Ruling 14)
+    for (let i = 0; i <= CAP; i++) {
+      const key = `cache-test-${i}`;
+      F.apiKeys.set(key, { active: true, sub: `sa:${i}`, service_account: { id: `id${i}`, name: `n${i}`, kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: `k${i}`, exp: Math.floor(Date.now() / 1000) + 3600 });
+      // eslint-disable-next-line no-await-in-loop
+      const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
+      assert.equal(r.status, 200);
+    }
+    const before = introspects();
+    const again = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer cache-test-0' } });
+    assert.equal(again.status, 200);
+    assert.equal(introspects(), before + 1, 'the oldest key was evicted by the cap and had to be re-introspected');
+  } finally { await app.close(); }
+});
+
+test('requireApiKey: concurrent requests for the same cold key share one introspection call', async () => {
+  const app = await startApp({ F, extend });
+  F.apiKeys.set('pk-concurrent', { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(Date.now() / 1000) + 3600 });
+  try {
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-concurrent' } });
+    const results = await Promise.all([call(), call(), call(), call(), call()]);
+    for (const r of results) assert.equal(r.status, 200);
+    assert.equal(introspects(), 1, 'five concurrent requests for the same cold key shared one introspection call');
+  } finally { await app.close(); }
+});
+
 test('getUpstreamToken: exchanges the session access token once per hour; errors without a user session', async () => {
   const app = await startApp({ F, extend });
   try {
@@ -117,4 +146,22 @@ test('getUpstreamToken: exchanges the session access token once per hour; errors
     const r = await agent(dev.baseUrl).req('/cal');
     assert.equal(r.status, 500); assert.match((await r.json()).message, /no user session/);
   } finally { await dev.close(); }
+});
+
+test('getUpstreamToken: honours the injected clock (not the real clock) for upstream-token expiry', async () => {
+  const clock = { t: Date.now() };
+  const app = await startApp({ F, extend, options: { now: () => clock.t } });
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F);
+    const t0 = clock.t;
+    await a.req('/cal');
+    assert.equal(F.calls.filter((c) => c.path === '/upstream/entra/token').length, 1);
+    clock.t = t0 + 3600 * 1000 - 120 * 1000; // t0 + 58min: still outside the 60s pre-expiry window
+    await a.req('/cal');
+    assert.equal(F.calls.filter((c) => c.path === '/upstream/entra/token').length, 1, 'still cached at 58 minutes');
+    clock.t = t0 + 3600 * 1000 - 30 * 1000; // t0 + 59.5min: inside the 60s pre-expiry window
+    await a.req('/cal');
+    assert.equal(F.calls.filter((c) => c.path === '/upstream/entra/token').length, 2, 're-exchanged inside the 60s pre-expiry window');
+  } finally { await app.close(); }
 });
