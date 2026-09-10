@@ -109,6 +109,7 @@ test('verifyLogoutToken: accepts a good token; rejects bad aud/iss, nonce, missi
   await assert.rejects(oidc.verifyLogoutToken(await F.logoutToken({ sid: 's', events: {} })), /event/);
   await assert.rejects(oidc.verifyLogoutToken(await F.logoutToken({ sid: 's', events: { 'http://schemas.openid.net/event/backchannel-logout': 'yes' } })), /event/);
   await assert.rejects(oidc.verifyLogoutToken(await F.logoutToken({ sid: 's', iat: Math.floor(Date.now() / 1000) - 600 })), /iat|age|old/i);
+  await assert.rejects(oidc.verifyLogoutToken(await F.logoutToken({ sid: 's', iat: Math.floor(Date.now() / 1000) - 130 })), /iat|age|old/i, 'the 120s window plus tolerance stays under ~125s');
   await assert.rejects(oidc.verifyLogoutToken(await F.logoutToken({})), /sid|sub/);
   const { privateKey } = await require('jose').generateKeyPair('ES256');
   const forged = await new (require('jose').SignJWT)({ iss: F.issuer, aud: F.clientId, iat: Math.floor(Date.now() / 1000), jti: 'x', sid: 's', events: { 'http://schemas.openid.net/event/backchannel-logout': {} } }).setProtectedHeader({ alg: 'ES256', kid: 'k1' }).sign(privateKey);
