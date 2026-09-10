@@ -5,6 +5,7 @@ const { createSessionStore } = require('./lib/sessions');
 const { createMiddleware } = require('./lib/middleware');
 const { createRoutes } = require('./lib/routes');
 const { memorySession } = require('./lib/session/memory');
+const { mysqlSession } = require('./lib/session/mysql');
 
 const REQUIRED = ['issuer', 'clientId', 'clientSecret', 'baseUrl', 'secret', 'session', 'resolveUser'];
 
@@ -37,5 +38,6 @@ function pwAuth(options = {}) {
 }
 
 pwAuth.memorySession = memorySession;
+pwAuth.mysqlSession = mysqlSession;
 
 module.exports = pwAuth;
