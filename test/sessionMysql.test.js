@@ -74,5 +74,6 @@ test('custom table/columns are honoured; bad identifiers are rejected at constru
   assert.equal(db.calls[0].sql, 'DELETE FROM `app_sessions` WHERE `tok` = ?');
   assert.throws(() => mysqlSession(db, { table: 'sessions; DROP' }), /identifier/);
   assert.throws(() => mysqlSession(db, { columns: { sid: 'a`b' } }), /identifier/);
+  assert.throws(() => mysqlSession(db, { columns: { sid: 'a.b' } }), /identifier/, 'a column is a single identifier, never schema-qualified');
   assert.throws(() => mysqlSession({}), /query/);
 });

@@ -119,6 +119,8 @@ Every expiry comparison binds a JS `Date`, so the pool wants `timezone: '+00:00'
 
 Call `auth.sweepExpiredSessions()` on an interval (e.g. hourly); the shim never deletes expired rows on its own.
 
+A custom adapter implements `create(row)`, `get(token)`, `update(token, patch)`, `destroy(token)`, `destroyBySid(sid)`, `destroyBySub(sub)`, `deleteExpired(now)` (returns the count; `sweepExpiredSessions()` throws without it) and optionally `close()`. `lib/session/memory.js` is the reference implementation.
+
 ## Develop
 
 `npm ci --no-audit && npm test` (node:test against an in-process fake issuer; no network).
