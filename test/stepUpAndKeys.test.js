@@ -162,6 +162,24 @@ test('requireApiKey: header/kind/active checks, 60s cache, grace on issuer outag
   } finally { await app.close(); }
 });
 
+test('requireApiKey: a 429 from introspection is treated like an outage — served from the grace-window cache, then backs off, not an immediate 503', async () => {
+  const clock = { t: Date.now() };
+  const logs = [];
+  const app = await startApp({ F, extend, options: { now: () => clock.t, logger: { info() {}, warn() {}, error: (m) => logs.push(m) } } });
+  const key = apiKey('rate-limited');
+  F.apiKeys.set(key, { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(Date.now() / 1000) + 3600 });
+  try {
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
+    assert.equal((await call()).status, 200, 'warms the cache');
+    clock.t += 61 * 1000; // past the 60s cache window
+    F.fail.add('introspect_429');
+    assert.equal((await call()).status, 200, '429 gets the grace-window cache, not an immediate 503');
+    assert.match(logs.pop(), /serving the cached verdict/);
+    clock.t += 6 * 60 * 1000; // past the 5-minute grace window too
+    assert.equal((await call()).status, 503, 'no usable verdict left once the grace window is gone');
+  } finally { await app.close(); }
+});
+
 test('requireApiKey: a verdict is not reused past its own exp, even inside the 60s cache window', async () => {
   const clock = { t: Date.now() };
   const app = await startApp({ F, extend, options: { now: () => clock.t } });

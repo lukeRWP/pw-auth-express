@@ -128,6 +128,11 @@ test('introspectApiKey: pwiam body passthrough, inactive, client auth failure, i
   await assert.rejects(oidc.introspectApiKey('pk_live_1'), (e) => e instanceof OidcError && e.kind === 'issuer_error');
 });
 
+test('introspectApiKey: a 429 from the issuer is issuer_error, not protocol — callers give it the same outage handling as a 5xx', async () => {
+  F.fail.add('introspect_429');
+  await assert.rejects(oidc.introspectApiKey('pk_live_1'), (e) => e instanceof OidcError && e.kind === 'issuer_error' && e.status === 429);
+});
+
 test('upstreamToken: exchanges the user access token; rejected token is invalid_grant; unknown provider is protocol', async () => {
   const { tokens } = await login();
   const t = await oidc.upstreamToken('entra', tokens.accessToken);
