@@ -62,12 +62,59 @@ async function resolveUser(c) {
 | `logger` | `console` | needs `info/warn/error` |
 | `now`, `fetch`, `allowInsecure` | `Date.now`, global, `false` | test hooks |
 
+## API keys
+
+Three ways to work with pwiam's service-account API keys, all sharing one local shape check —
+`pwk_<16-hex keyId>_<43-char secret>` — so anything else is refused before it ever costs a network
+call or a cache entry:
+
+- **`auth.requireApiKey(kind)`** — Express middleware that gates a route to service accounts of the
+  given `kind` (shown under Use, above): 401 without a matching bearer, sets `req.principal`/`req.auth`
+  on success. 60 s cache, 5-minute grace on a pwiam outage (429 included).
+- **`auth.introspectApiKey(key)`** — for proof-of-possession binding, not route-gating: hand it a key
+  an app received out of band (pasted by a user, sent by a device) and get back
+  `{ active, serviceAccount: { id, name, kind }, app, env, keyId, exp }` or `{ active: false }`, using
+  the app's own client credentials and the same shape check as `requireApiKey`.
+
+  ```js
+  const introspection = await auth.introspectApiKey(req.body.deviceKey);
+  if (!introspection.active) return res.status(400).json({ error: 'invalid_key' });
+  ```
+
+  Deliberately **uncached** — unlike `requireApiKey`, every call is a fresh introspection. A binding is
+  a rare, security-sensitive, user-driven action, so it should reflect pwiam's verdict *right now*
+  rather than one that's already up to 5 minutes stale from `requireApiKey`'s cache; the two caches
+  (or lack thereof) are independent, and that's intentional.
+- **`pwAuth.apiKeyVerifier({ issuer, clientId, clientSecret, fetch?, timeoutSec?, allowInsecure?, now?, cacheTtlMs?, graceMs? })`**
+  — a standalone factory for a service that can't construct the full login config (no
+  `baseUrl`/`secret`/`session`/`resolveUser`) but still needs to verify pwiam API keys — e.g. the PW
+  orchestrator, which reaches the issuer through a proxy, hence the injectable `fetch`. Returns
+  `{ verify(key) }` with the same shape-check/cache/grace/backoff semantics as `requireApiKey`:
+  `verify()` resolves pwiam's introspection body verbatim (`{ active: false }` for an inactive or
+  malformed key) and rejects once there's no usable verdict left to serve.
+
+  ```js
+  const verifier = pwAuth.apiKeyVerifier({ issuer, clientId, clientSecret, fetch: viaProxy });
+  const body = await verifier.verify(key);
+  if (!body.active) return res.status(401).end();
+  ```
+
+**Binding pattern.** pwiam API keys carry no user or resource binding of their own — they identify a
+service account, not a person or a thing. If your app needs one (e.g. daybook binding a pasted device
+key to the signed-in user, so the device can post on their behalf later), record it yourself, keyed by
+the service account's **id**, never its **name** — a name isn't guaranteed stable or unique, an id is:
+
+```js
+await db.deviceBindings.upsert({ userId: req.user.id, serviceAccountId: introspection.serviceAccount.id });
+```
+
 ## Behaviour that matters in production
 
 - Access tokens are opaque and never checked locally; roles come from the ID token at login and every refresh. A role change lands within 15 minutes.
 - Only `invalid_grant` from the issuer ends a session. A pwiam outage (5xx/timeout) serves the last-known session and retries once a minute — apps keep working; `logger.error` lines say `serving the stale session`.
 - `requireAcr` asks for a step-up login once (401 `step_up_required`, or a 302 for a browser). If the issuer answers without the requested `acr`, the login still succeeds but the guarded route then answers `403 { error: 'step_up_failed', acr }` — terminal, so a pwiam that cannot do `webauthn` produces an error page, not a redirect loop. The next successful step-up login clears it.
-- API-key verdicts cache 60 s and survive a pwiam outage for 5 more minutes.
+- API-key verdicts cache 60 s and survive a pwiam outage for 5 more minutes; a 429 (rate limited) from introspection gets the same treatment as a 5xx — cached verdict, then backs off — not an immediate failure.
+- `requireApiKey`, `introspectApiKey` and `apiKeyVerifier` all reject a bearer that isn't shaped like a pwiam API key (`pwk_<16-hex keyId>_<43-char secret>`) before it costs a network call or a cache entry.
 - Back-channel logout ends sessions by `sid`; a token carrying both uses `sid` and leaves the user's other sessions alone. `sub` alone ends all of them.
 - The refresh mutex and the back-channel `jti` guard are per-process. Scale out and both weaken: a replayed `jti` becomes an idempotent no-op on another instance (still safe), but two instances refreshing one session can race and get the whole refresh family revoked.
 - Discovery metadata is fetched once and cached for the life of the process — moving a pwiam endpoint needs an app restart, not just a pwiam deploy.
