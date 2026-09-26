@@ -9,7 +9,7 @@ Spec: `prevailing-winds/docs/superpowers/specs/2026-09-08-pw-iam-design.md` §7.
 Consumed as a git tag (no registry):
 
 ```json
-"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.1.0" }
+"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.2.0" }
 ```
 
 Node ≥ 22.12, Express 4 or 5.
