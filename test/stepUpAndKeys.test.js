@@ -216,7 +216,7 @@ test('requireApiKey under bypassAuth yields a dev service-account principal', as
 test('requireApiKey: the introspection cache is bounded — past the cap the oldest entry is evicted and re-introspected', async () => {
   const app = await startApp({ F, extend });
   try {
-    // CAP matches KEY_CACHE_MAX in lib/middleware.js (not exported — kept behavioural per Ruling 14).
+    // CAP matches CACHE_MAX in lib/apiKeyVerifier.js (not exported — kept behavioural per Ruling 14).
     // This test runs on the real clock, so the 1001 requests below must finish inside KEY_CACHE_MS
     // (60 s): overrun it and cache-test-0 is re-introspected because its verdict went stale rather
     // than because the cap evicted it — a PASS for the wrong reason, not a flake. Currently ~4 s.
