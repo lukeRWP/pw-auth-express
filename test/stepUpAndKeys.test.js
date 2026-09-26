@@ -260,6 +260,27 @@ test('timeoutSec reaches the issuer client: a hung pwiam is given up on, not wai
   } finally { await app.close(); }
 });
 
+test('introspectApiKey: normalizes an active key for proof-of-possession binding; {active:false} for inactive/unknown/malformed; no caching', async () => {
+  const app = await startApp({ F, extend });
+  try {
+    const key = apiKey('daybook-device');
+    const expSec = Math.floor(Date.now() / 1000) + 3600;
+    F.apiKeys.set(key, { active: true, sub: 'sa:daybook-device', service_account: { id: '01HDEV', name: 'lukes-phone', kind: 'daybook-device' }, app: 'daybook', env: 'prod', key_id: '01HKEY', exp: expSec });
+    const result = await app.auth.introspectApiKey(key);
+    assert.deepEqual(result, { active: true, serviceAccount: { id: '01HDEV', name: 'lukes-phone', kind: 'daybook-device' }, app: 'daybook', env: 'prod', keyId: '01HKEY', exp: expSec });
+    // same shape check as requireApiKey: malformed bearers never reach the issuer
+    assert.deepEqual(await app.auth.introspectApiKey('not-pwk-shaped'), { active: false });
+    assert.equal(introspects(), 1, 'the malformed key never reached the issuer');
+    // shape-valid but unregistered: pwiam says inactive, and that's what's returned
+    assert.deepEqual(await app.auth.introspectApiKey(apiKey('never-registered')), { active: false });
+    assert.equal(introspects(), 2);
+    // no caching: every call is a fresh introspection, unlike requireApiKey's 60s cache
+    await app.auth.introspectApiKey(key);
+    await app.auth.introspectApiKey(key);
+    assert.equal(introspects(), 4, 'introspectApiKey always asks pwiam for the current verdict');
+  } finally { await app.close(); }
+});
+
 test('getUpstreamToken: exchanges the session access token once per hour; errors without a user session', async () => {
   const app = await startApp({ F, extend });
   try {

@@ -32,6 +32,7 @@ function pwAuth(options = {}) {
     requireAuth: mw.requireAuth,
     requireAcr: mw.requireAcr,
     requireApiKey: mw.requireApiKey,
+    introspectApiKey: mw.introspectApiKey,
     getUpstreamToken: mw.getUpstreamToken,
     loginUrl: mw.loginUrl,
     sweepExpiredSessions: () => store.sweepExpired(),
