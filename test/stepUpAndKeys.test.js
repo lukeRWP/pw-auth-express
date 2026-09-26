@@ -17,6 +17,15 @@ const extend = (app, auth) => {
 };
 const introspects = () => F.calls.filter((c) => c.path === '/apikeys/introspect').length;
 
+const crypto = require('node:crypto');
+// pwiam-shaped API keys: pwk_<16-hex keyId>_<43-char base64url secret>. Deterministic per label so
+// tests still read like the old 'pk-print' literals while satisfying requireApiKey's shape check.
+function apiKey(label) {
+  const id = crypto.createHash('sha256').update(`${label}:id`).digest().subarray(0, 8).toString('hex');
+  const secret = crypto.createHash('sha256').update(`${label}:secret`).digest().toString('base64url');
+  return `pwk_${id}_${secret}`;
+}
+
 test('requireAcr: pwd-otp session is told to step up; after a webauthn login it passes; max_age re-triggers; no-maxAge variant only checks acr', async () => {
   const clock = { t: Date.now() };
   const app = await startApp({ F, extend, options: { now: () => clock.t } });
@@ -86,56 +95,98 @@ test('requireAcr under bypassAuth passes', async () => {
   try { assert.equal((await agent(app.baseUrl).req('/admin/danger')).status, 200); } finally { await app.close(); }
 });
 
+test('requireApiKey: a bearer that does not match pwiam\'s key shape is rejected locally — no introspection, no cache entry', async () => {
+  const app = await startApp({ F, extend });
+  try {
+    const call = (key) => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
+    const junk = [
+      'nope',
+      'pwk_tooshort_x',
+      `PWK_${'0'.repeat(16)}_${'a'.repeat(43)}`, // wrong case on the prefix
+      `pwk_${'g'.repeat(16)}_${'a'.repeat(43)}`, // 'g' is not hex
+      `pwk_${'0'.repeat(16)}_${'a'.repeat(42)}`, // secret one char short
+      `pwk_${'0'.repeat(15)}_${'a'.repeat(43)}`, // keyId one char short
+    ];
+    for (const key of junk) {
+      // eslint-disable-next-line no-await-in-loop
+      const r = await call(key);
+      assert.equal(r.status, 401, key);
+    }
+    assert.equal(introspects(), 0, 'no malformed bearer ever reached the issuer');
+  } finally { await app.close(); }
+});
+
 test('requireApiKey: header/kind/active checks, 60s cache, grace on issuer outage, 503 without a usable verdict', async () => {
   const clock = { t: Date.now() };
   const logs = [];
   const app = await startApp({ F, extend, options: { now: () => clock.t, logger: { info() {}, warn() {}, error: (m) => logs.push(m) } } });
   const sa = (kind) => ({ active: true, sub: `sa:${kind}`, service_account: { id: `01H${kind}`, name: `${kind}-1`, kind }, app: 'tally', env: 'prod', key_id: '01HK', exp: Math.floor(Date.now() / 1000) + 3600 });
-  F.apiKeys.set('pk-print', sa('print-agent')); F.apiKeys.set('pk-ci', sa('ci'));
+  const KEY_PRINT = apiKey('print-agent'); const KEY_CI = apiKey('ci');
+  F.apiKeys.set(KEY_PRINT, sa('print-agent')); F.apiKeys.set(KEY_CI, sa('ci'));
   try {
     const call = (key) => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: key ? { authorization: `Bearer ${key}` } : {} });
     const none = await call();
     assert.equal(none.status, 401); assert.equal(none.headers.get('www-authenticate'), 'Bearer');
     assert.equal((await call('nope')).status, 401);
-    assert.equal((await call('pk-ci')).status, 401, 'wrong kind');
-    const ok = await call('pk-print');
+    assert.equal(introspects(), 0, 'malformed bearer never reaches the issuer');
+    assert.equal((await call(KEY_CI)).status, 401, 'wrong kind');
+    const ok = await call(KEY_PRINT);
     assert.equal(ok.status, 200);
     const body = await ok.json();
     assert.deepEqual(body.principal, { kind: 'service-account', id: '01Hprint-agent', name: 'print-agent-1', saKind: 'print-agent', app: 'tally', env: 'prod', keyId: '01HK', sub: 'sa:print-agent' });
     assert.deepEqual(body.auth, { sub: 'sa:print-agent', roles: [], acr: null, authTime: null, stale: false, bypass: false, apiKey: true });
     const n = introspects();
-    assert.equal((await call('pk-print')).status, 200);
+    assert.equal((await call(KEY_PRINT)).status, 200);
     assert.equal(introspects(), n, 'cached');
     clock.t += 61 * 1000;
-    assert.equal((await call('pk-print')).status, 200);
+    assert.equal((await call(KEY_PRINT)).status, 200);
     assert.equal(introspects(), n + 1, 're-introspected after 60s');
     // outage inside the grace window: cached verdict served, error logged
     clock.t += 61 * 1000; F.fail.add('introspect');
-    assert.equal((await call('pk-print')).status, 200);
+    assert.equal((await call(KEY_PRINT)).status, 200);
     assert.equal(logs.length, 1); assert.match(logs[0], /serving the cached verdict/);
     // ...and the failure is backed off: a blackholed issuer is not re-dialled on every request
     const failed = introspects();
-    for (let i = 0; i < 4; i++) assert.equal((await call('pk-print')).status, 200);
+    for (let i = 0; i < 4; i++) assert.equal((await call(KEY_PRINT)).status, 200);
     assert.equal(introspects(), failed, 'no retry inside the 60s backoff');
     clock.t += 61 * 1000;
-    assert.equal((await call('pk-print')).status, 200);
+    assert.equal((await call(KEY_PRINT)).status, 200);
     assert.equal(introspects(), failed + 1, 'exactly one retry after the backoff');
     // never-seen key during the outage: 503
-    assert.equal((await call('pk-new')).status, 503);
+    assert.equal((await call(apiKey('new'))).status, 503);
     // beyond grace: 503
     clock.t += 6 * 60 * 1000;
-    assert.equal((await call('pk-print')).status, 503);
+    assert.equal((await call(KEY_PRINT)).status, 503);
     F.fail.clear();
-    assert.equal((await call('pk-print')).status, 200);
+    assert.equal((await call(KEY_PRINT)).status, 200);
+  } finally { await app.close(); }
+});
+
+test('requireApiKey: a 429 from introspection is treated like an outage — served from the grace-window cache, then backs off, not an immediate 503', async () => {
+  const clock = { t: Date.now() };
+  const logs = [];
+  const app = await startApp({ F, extend, options: { now: () => clock.t, logger: { info() {}, warn() {}, error: (m) => logs.push(m) } } });
+  const key = apiKey('rate-limited');
+  F.apiKeys.set(key, { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(Date.now() / 1000) + 3600 });
+  try {
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
+    assert.equal((await call()).status, 200, 'warms the cache');
+    clock.t += 61 * 1000; // past the 60s cache window
+    F.fail.add('introspect_429');
+    assert.equal((await call()).status, 200, '429 gets the grace-window cache, not an immediate 503');
+    assert.match(logs.pop(), /serving the cached verdict/);
+    clock.t += 6 * 60 * 1000; // past the 5-minute grace window too
+    assert.equal((await call()).status, 503, 'no usable verdict left once the grace window is gone');
   } finally { await app.close(); }
 });
 
 test('requireApiKey: a verdict is not reused past its own exp, even inside the 60s cache window', async () => {
   const clock = { t: Date.now() };
   const app = await startApp({ F, extend, options: { now: () => clock.t } });
-  F.apiKeys.set('pk-short', { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(clock.t / 1000) + 5 });
+  const key = apiKey('short-lived');
+  F.apiKeys.set(key, { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(clock.t / 1000) + 5 });
   try {
-    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-short' } });
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
     assert.equal((await call()).status, 200);
     const n = introspects();
     clock.t += 6 * 1000;
@@ -146,9 +197,10 @@ test('requireApiKey: a verdict is not reused past its own exp, even inside the 6
 
 test('requireApiKey: wrong client secret (invalid_client) is a 503, not a 401 for the caller', async () => {
   const app = await startApp({ F, extend, options: { clientSecret: 'wrong' } });
-  F.apiKeys.set('pk-print', { active: true, sub: 'sa:x', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: 0 });
+  const key = apiKey('wrong-secret');
+  F.apiKeys.set(key, { active: true, sub: 'sa:x', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: 0 });
   try {
-    const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-print' } });
+    const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
     assert.equal(r.status, 503);
   } finally { await app.close(); }
 });
@@ -164,20 +216,21 @@ test('requireApiKey under bypassAuth yields a dev service-account principal', as
 test('requireApiKey: the introspection cache is bounded — past the cap the oldest entry is evicted and re-introspected', async () => {
   const app = await startApp({ F, extend });
   try {
-    // CAP matches KEY_CACHE_MAX in lib/middleware.js (not exported — kept behavioural per Ruling 14).
+    // CAP matches CACHE_MAX in lib/apiKeyVerifier.js (not exported — kept behavioural per Ruling 14).
     // This test runs on the real clock, so the 1001 requests below must finish inside KEY_CACHE_MS
     // (60 s): overrun it and cache-test-0 is re-introspected because its verdict went stale rather
     // than because the cap evicted it — a PASS for the wrong reason, not a flake. Currently ~4 s.
     const CAP = 1000;
+    const keyFor = (i) => apiKey(`cache-test-${i}`);
     for (let i = 0; i <= CAP; i++) {
-      const key = `cache-test-${i}`;
+      const key = keyFor(i);
       F.apiKeys.set(key, { active: true, sub: `sa:${i}`, service_account: { id: `id${i}`, name: `n${i}`, kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: `k${i}`, exp: Math.floor(Date.now() / 1000) + 3600 });
       // eslint-disable-next-line no-await-in-loop
       const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
       assert.equal(r.status, 200);
     }
     const before = introspects();
-    const again = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer cache-test-0' } });
+    const again = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${keyFor(0)}` } });
     assert.equal(again.status, 200);
     assert.equal(introspects(), before + 1, 'the oldest key was evicted by the cap and had to be re-introspected');
   } finally { await app.close(); }
@@ -185,9 +238,10 @@ test('requireApiKey: the introspection cache is bounded — past the cap the old
 
 test('requireApiKey: concurrent requests for the same cold key share one introspection call', async () => {
   const app = await startApp({ F, extend });
-  F.apiKeys.set('pk-concurrent', { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(Date.now() / 1000) + 3600 });
+  const key = apiKey('concurrent');
+  F.apiKeys.set(key, { active: true, sub: 'sa:print-agent', service_account: { id: '1', name: 'p', kind: 'print-agent' }, app: 'tally', env: 'prod', key_id: 'k', exp: Math.floor(Date.now() / 1000) + 3600 });
   try {
-    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-concurrent' } });
+    const call = () => fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${key}` } });
     const results = await Promise.all([call(), call(), call(), call(), call()]);
     for (const r of results) assert.equal(r.status, 200);
     assert.equal(introspects(), 1, 'five concurrent requests for the same cold key shared one introspection call');
@@ -200,9 +254,30 @@ test('timeoutSec reaches the issuer client: a hung pwiam is given up on, not wai
   const app = await startApp({ F, extend, options: { timeoutSec: 0.05, fetch: hung } });
   try {
     const t0 = Date.now();
-    const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: 'Bearer pk-print' } });
+    const r = await fetch(`${app.baseUrl}/print`, { method: 'POST', headers: { authorization: `Bearer ${apiKey('print-agent')}` } });
     assert.equal(r.status, 503);
     assert.ok(Date.now() - t0 < 2000, `bounded by timeoutSec, not the 10s default (took ${Date.now() - t0}ms)`);
+  } finally { await app.close(); }
+});
+
+test('introspectApiKey: normalizes an active key for proof-of-possession binding; {active:false} for inactive/unknown/malformed; no caching', async () => {
+  const app = await startApp({ F, extend });
+  try {
+    const key = apiKey('daybook-device');
+    const expSec = Math.floor(Date.now() / 1000) + 3600;
+    F.apiKeys.set(key, { active: true, sub: 'sa:daybook-device', service_account: { id: '01HDEV', name: 'lukes-phone', kind: 'daybook-device' }, app: 'daybook', env: 'prod', key_id: '01HKEY', exp: expSec });
+    const result = await app.auth.introspectApiKey(key);
+    assert.deepEqual(result, { active: true, serviceAccount: { id: '01HDEV', name: 'lukes-phone', kind: 'daybook-device' }, app: 'daybook', env: 'prod', keyId: '01HKEY', exp: expSec });
+    // same shape check as requireApiKey: malformed bearers never reach the issuer
+    assert.deepEqual(await app.auth.introspectApiKey('not-pwk-shaped'), { active: false });
+    assert.equal(introspects(), 1, 'the malformed key never reached the issuer');
+    // shape-valid but unregistered: pwiam says inactive, and that's what's returned
+    assert.deepEqual(await app.auth.introspectApiKey(apiKey('never-registered')), { active: false });
+    assert.equal(introspects(), 2);
+    // no caching: every call is a fresh introspection, unlike requireApiKey's 60s cache
+    await app.auth.introspectApiKey(key);
+    await app.auth.introspectApiKey(key);
+    assert.equal(introspects(), 4, 'introspectApiKey always asks pwiam for the current verdict');
   } finally { await app.close(); }
 });
 

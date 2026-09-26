@@ -6,6 +6,7 @@ const { createMiddleware } = require('./lib/middleware');
 const { createRoutes } = require('./lib/routes');
 const { memorySession } = require('./lib/session/memory');
 const { mysqlSession } = require('./lib/session/mysql');
+const { apiKeyVerifier } = require('./lib/apiKeyVerifier');
 
 const REQUIRED = ['issuer', 'clientId', 'clientSecret', 'baseUrl', 'secret', 'session', 'resolveUser'];
 
@@ -32,6 +33,7 @@ function pwAuth(options = {}) {
     requireAuth: mw.requireAuth,
     requireAcr: mw.requireAcr,
     requireApiKey: mw.requireApiKey,
+    introspectApiKey: mw.introspectApiKey,
     getUpstreamToken: mw.getUpstreamToken,
     loginUrl: mw.loginUrl,
     sweepExpiredSessions: () => store.sweepExpired(),
@@ -41,5 +43,6 @@ function pwAuth(options = {}) {
 
 pwAuth.memorySession = memorySession;
 pwAuth.mysqlSession = mysqlSession;
+pwAuth.apiKeyVerifier = apiKeyVerifier;
 
 module.exports = pwAuth;

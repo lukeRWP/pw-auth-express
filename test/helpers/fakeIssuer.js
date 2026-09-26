@@ -170,6 +170,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
       const body = await readForm(req);
       F.calls.push({ method: 'POST', path, body: { key: body.key ? '<redacted>' : undefined } });
       if (!basicOk(req)) return json(res, 401, { error: 'invalid_client', message: 'client authentication failed' });
+      if (F.fail.has('introspect_429')) return json(res, 429, { error: 'too_many_requests' });
       if (F.fail.has('introspect')) return json(res, 500, { error: 'server_error' });
       return json(res, 200, F.apiKeys.get(body.key) || { active: false });
     }
