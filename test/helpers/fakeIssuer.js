@@ -197,7 +197,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
         return json(res, 401, { error: 'invalid_client' });
       }
       if (F.rp.status === 201 && req.method === 'POST') {
-        return json(res, 201, { serviceAccount: { id: '01J0000000000000000000000A', name: body.label || 'device', createdAt: new Date().toISOString() }, apiKey: 'pwk_0123456789abcdef_' + 'x'.repeat(43) });
+        return json(res, 201, { serviceAccount: { id: '01J0000000000000000000000A', name: body.label || 'device', createdAt: new Date().toISOString() }, apiKey: 'pwk_0123456789abcdef_' + 'x'.repeat(43) }); // fake test key, not a real credential // gitleaks:allow
       }
       if (req.method === 'DELETE') { res.writeHead(F.rp.deleteStatus || 204); return res.end(); }
       if (F.rp.location) { res.writeHead(F.rp.status, { location: F.rp.location }); return res.end(); }
