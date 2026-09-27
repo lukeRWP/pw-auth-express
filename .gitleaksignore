@@ -1,0 +1,2 @@
+# Fake pwk_ test key in the fake issuer fixture (not a secret) — commit before the inline gitleaks:allow
+7bc934534850bd27d8573a5f1abac919e1f21cd8:test/helpers/fakeIssuer.js:generic-api-key:200
