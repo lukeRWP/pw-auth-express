@@ -18,7 +18,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
 
   const F = {
     issuer, jwk, clientId, clientSecret, accessTtl,
-    calls: [], fail: new Set(), refreshIdToken: true, ignoreAcr: false,
+    calls: [], fail: new Set(), refreshIdToken: true, ignoreAcr: false, rp: { status: 201 },
     user: { sub: '01HUSERAAAAAAAAAAAAAAAAAAA', name: 'Ada Lovelace', email: 'ada@example.com', roles: ['user'], entra_oid: 'oid-ada' },
     apiKeys: new Map(),
     codes: new Map(),     // code -> { challenge, redirectUri, nonce, acr, amr, authTime, sid }
@@ -58,6 +58,10 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
     const ct = req.headers['content-type'] || '';
     if (ct.includes('application/json')) return JSON.parse(s || '{}');
     return Object.fromEntries(new URLSearchParams(s));
+  }
+  async function readJson(req) {
+    let s = ''; for await (const c of req) s += c;
+    return s ? JSON.parse(s) : {};
   }
   function basicOk(req) {
     const h = req.headers.authorization || '';
@@ -183,6 +187,20 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
       if (!at) return json(res, 401, { error: 'invalid_token' });
       if (up[1] !== 'entra') return json(res, 404, { error: 'not_found', message: `no upstream ${up[1]}` });
       return json(res, 200, { access_token: `${up[1]}-at-${at.sub}`, expires_in: 3600 });
+    }
+
+    if (path === '/rp/device-keys' || path.startsWith('/rp/device-keys/')) {
+      const body = req.method === 'GET' ? null : await readJson(req);
+      F.calls.push({ path, method: req.method, headers: { ...req.headers }, url: req.url, body });
+      if (!bearer(req)) return json(res, 401, { error: 'invalid_token' });
+      if (req.headers['x-pw-client-id'] !== clientId || req.headers['x-pw-client-secret'] !== clientSecret) {
+        return json(res, 401, { error: 'invalid_client' });
+      }
+      if (F.rp.status === 201 && req.method === 'POST') {
+        return json(res, 201, { serviceAccount: { id: '01J0000000000000000000000A', name: body.label || 'device', createdAt: new Date().toISOString() }, apiKey: 'pwk_0123456789abcdef_' + 'x'.repeat(43) });
+      }
+      if (req.method === 'DELETE') { res.writeHead(F.rp.deleteStatus || 204); return res.end(); }
+      return json(res, F.rp.status, F.rp.body || {});
     }
 
     json(res, 404, { error: 'not_found' });

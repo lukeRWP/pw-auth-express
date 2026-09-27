@@ -108,6 +108,34 @@ the service account's **id**, never its **name** — a name isn't guaranteed sta
 await db.deviceBindings.upsert({ userId: req.user.id, serviceAccountId: introspection.serviceAccount.id });
 ```
 
+## Calling pwiam as the signed-in user
+
+`auth.callIdp(req, method, path, body?)` calls pwiam's `/rp/*` routes (self-service, user-driven
+actions — e.g. minting or revoking the user's own device keys) as the signed-in user: the session's
+access token goes as the `Authorization: Bearer` header (proves the user), and the app's own
+`clientId`/`clientSecret` go as `X-PW-Client-Id`/`X-PW-Client-Secret` headers (proves the app) —
+never in the URL or body, where a query string would land in access and proxy logs.
+
+```js
+app.post('/api/device-keys', auth.requireAuth, async (req, res, next) => {
+  try {
+    const { status, body } = await auth.callIdp(req, 'POST', '/rp/device-keys', { kind: 'location-ingest', label: req.body.label });
+    res.status(status).json(body);
+  } catch (e) { next(e); }
+});
+```
+
+It resolves to `{ status, body }` for **every** HTTP status pwiam answers with, including 4xx/5xx —
+callers decide what a `409 limit_reached` means, `callIdp` doesn't swallow it. A `204` resolves as
+`{ status: 204, body: null }`. Only `path`s starting with `/rp/` are allowed — anything else throws
+`Error('pw-auth: callIdp: only /rp/ paths may be called (got …)')`, since this call sends the app's
+client secret and is not a general-purpose proxy. Requires a real user session (`req.pwSession`):
+throws `Error('pw-auth: callIdp: no user session on the request (not available under bypass or for
+API-key principals)')` under `bypassAuth` or for `requireApiKey` principals. If the session is near
+expiry it's refreshed first (same `REFRESH_SKEW_MS` as `requireAuth`); if that refresh fails outright,
+throws `OidcError('invalid_grant', 'session expired')`. A transport failure or timeout talking to
+pwiam throws `OidcError('issuer_error')`.
+
 ## Behaviour that matters in production
 
 - Access tokens are opaque and never checked locally; roles come from the ID token at login and every refresh. A role change lands within 15 minutes.
