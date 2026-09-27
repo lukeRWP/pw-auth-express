@@ -142,6 +142,56 @@ test('upstreamToken: exchanges the user access token; rejected token is invalid_
   await assert.rejects(oidc.upstreamToken('google', tokens.accessToken), (e) => e instanceof OidcError && e.kind === 'protocol' && e.status === 404);
 });
 
+const http = require('node:http');
+const rpCalls = () => F.calls.filter((c) => c.path.startsWith('/rp/'));
+
+test('rpCall: rejects path traversal — raw, percent-encoded, and backslash variants never reach pwiam outside /rp/', async () => {
+  const { tokens } = await login();
+  const bypasses = [
+    '/rp/../manage/users',
+    '/rp/%2e%2e/manage',
+    '/rp/%2E%2E/manage',
+    '/rp/.%2e/manage',
+    '/rp/..\\manage',
+    '/rp/\t../manage',
+    '/rp/\n../manage',
+  ];
+  for (const path of bypasses) {
+    F.calls.length = 0;
+    await assert.rejects(oidc.rpCall({ method: 'GET', path, accessToken: tokens.accessToken }), /invalid path/, `expected a throw for ${JSON.stringify(path)}`);
+    assert.equal(rpCalls().length, 0, `bypass reached pwiam: ${JSON.stringify(path)}`);
+  }
+});
+
+test('rpCall: refusal never echoes the caller-supplied path', async () => {
+  const { tokens } = await login();
+  await assert.rejects(oidc.rpCall({ method: 'GET', path: '/manage/users?x=secret-marker', accessToken: tokens.accessToken }), (e) => !e.message.includes('secret-marker') && !e.message.includes('/manage/users'));
+});
+
+test('rpCall: GET cannot carry a body; only GET/POST/PUT/PATCH/DELETE are allowed', async () => {
+  const { tokens } = await login();
+  await assert.rejects(oidc.rpCall({ method: 'GET', path: '/rp/device-keys', accessToken: tokens.accessToken, body: { a: 1 } }), /GET requests cannot carry a body/);
+  await assert.rejects(oidc.rpCall({ method: 'HEAD', path: '/rp/device-keys', accessToken: tokens.accessToken }), /unsupported method/);
+  await assert.rejects(oidc.rpCall({ method: 'OPTIONS', path: '/rp/device-keys', accessToken: tokens.accessToken }), /unsupported method/);
+});
+
+test('rpCall: never follows a redirect off pwiam — a 3xx comes back as { status, body: null } and the redirect target is never hit', async () => {
+  const { tokens } = await login();
+  let hit = false;
+  const evil = http.createServer((req, res) => { hit = true; res.end('should never be requested'); });
+  await new Promise((r) => evil.listen(0, '127.0.0.1', r));
+  const evilUrl = `http://127.0.0.1:${evil.address().port}/steal`;
+  try {
+    F.rp = { status: 307, location: evilUrl };
+    const r = await oidc.rpCall({ method: 'POST', path: '/rp/device-keys', accessToken: tokens.accessToken, body: { kind: 'x' } });
+    assert.deepEqual(r, { status: 307, body: null });
+    assert.equal(hit, false, 'the redirect target must never receive a request');
+  } finally {
+    F.rp = { status: 201 };
+    await new Promise((r) => evil.close(r));
+  }
+});
+
 test('custom fetch is used for every request', async () => {
   const seen = [];
   const spy = (url, init) => { seen.push(new URL(url).pathname); return fetch(url, init); };

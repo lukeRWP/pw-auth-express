@@ -108,6 +108,52 @@ the service account's **id**, never its **name** — a name isn't guaranteed sta
 await db.deviceBindings.upsert({ userId: req.user.id, serviceAccountId: introspection.serviceAccount.id });
 ```
 
+## Calling pwiam as the signed-in user
+
+`auth.callIdp(req, method, path, body?)` calls pwiam's `/rp/*` routes (self-service, user-driven
+actions — e.g. minting or revoking the user's own device keys) as the signed-in user: the session's
+access token goes as the `Authorization: Bearer` header (proves the user), and the app's own
+`clientId`/`clientSecret` go as `X-PW-Client-Id`/`X-PW-Client-Secret` headers (proves the app) —
+never in the URL or body, where a query string would land in access and proxy logs.
+
+```js
+app.post('/api/device-keys', auth.requireAuth, async (req, res, next) => {
+  try {
+    const { status, body } = await auth.callIdp(req, 'POST', '/rp/device-keys', { kind: 'location-ingest', label: req.body.label });
+    res.status(status).json(body);
+  } catch (e) { next(e); }
+});
+```
+
+It resolves to `{ status, body }` for **every** HTTP status pwiam answers with, including 4xx/5xx —
+callers decide what a `409 limit_reached` means, `callIdp` doesn't swallow it. A `204` resolves as
+`{ status: 204, body: null }`. **Redirects are never followed** — `fetch` is called with
+`redirect: 'manual'`, so a `3xx` from pwiam also resolves as `{ status, body: null }` rather than
+being chased; a 3xx pointed cross-origin would otherwise leak the bearer and (fetch's default
+redirect handling only strips `Authorization`, not custom headers) the app's own client secret to
+whatever it points at.
+
+`path` is treated as hostile input — it reaches pwiam carrying `X-PW-Client-Secret`, so `rpCall` (the
+one choke point behind `callIdp`; there is no second check anywhere else) resolves it against the
+issuer's base URL and rejects it, with a fixed message that never echoes the path back, unless
+**all** of the following hold: it starts with `/rp/`; it contains none of `\`, tab, `\r`, `\n`,
+`%2e`, `%2f` or `%5c` (case-insensitive — blocks percent-encoded and backslash traversal); none of
+its `/`-separated segments (before any `?`) is `.` or `..`; and the resolved URL's origin and path
+prefix still land inside `<issuer>/rp/`. Anything that fails any of those throws
+`Error('pw-auth: callIdp: invalid path')`. `method` must be one of `GET`/`POST`/`PUT`/`PATCH`/`DELETE`
+(anything else throws `Error('pw-auth: callIdp: unsupported method')`), and a `GET` may not carry a
+`body` (throws `Error('pw-auth: callIdp: GET requests cannot carry a body')`).
+
+Requires a real user session (`req.pwSession`): throws `Error('pw-auth: callIdp: no user session on
+the request (not available under bypass or for API-key principals)')` under `bypassAuth` or for
+`requireApiKey` principals. If the session is near expiry it's refreshed first (same
+`REFRESH_SKEW_MS` as `requireAuth`, and this refresh is `callIdp`'s own — it doesn't rely on
+`requireAuth` having already done it for the same request). If that refresh is rejected outright,
+throws `OidcError('invalid_grant', 'session expired')`. If the issuer can't be reached to refresh and
+the access token is already past its actual expiry (not just inside the skew window), `callIdp` never
+sends the stale bearer — it throws `OidcError('issuer_error', 'session could not be refreshed')`
+instead. A transport failure or timeout talking to pwiam throws `OidcError('issuer_error')`.
+
 ## Behaviour that matters in production
 
 - Access tokens are opaque and never checked locally; roles come from the ID token at login and every refresh. A role change lands within 15 minutes.

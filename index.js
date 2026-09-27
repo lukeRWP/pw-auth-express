@@ -35,6 +35,7 @@ function pwAuth(options = {}) {
     requireApiKey: mw.requireApiKey,
     introspectApiKey: mw.introspectApiKey,
     getUpstreamToken: mw.getUpstreamToken,
+    callIdp: mw.callIdp,
     loginUrl: mw.loginUrl,
     sweepExpiredSessions: () => store.sweepExpired(),
     close: async () => { if (typeof o.session.close === 'function') await o.session.close(); },
