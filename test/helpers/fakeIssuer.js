@@ -200,6 +200,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
         return json(res, 201, { serviceAccount: { id: '01J0000000000000000000000A', name: body.label || 'device', createdAt: new Date().toISOString() }, apiKey: 'pwk_0123456789abcdef_' + 'x'.repeat(43) });
       }
       if (req.method === 'DELETE') { res.writeHead(F.rp.deleteStatus || 204); return res.end(); }
+      if (F.rp.location) { res.writeHead(F.rp.status, { location: F.rp.location }); return res.end(); }
       return json(res, F.rp.status, F.rp.body || {});
     }
 

@@ -72,7 +72,7 @@ test('callIdp: refuses non-/rp/ paths and requires a user session', async () => 
     await loginVia(a, F);
     const r = await a.req('/elsewhere');
     assert.equal(r.status, 500);
-    assert.match((await r.json()).message, /only \/rp\/ paths/);
+    assert.match((await r.json()).message, /invalid path/);
     assert.equal(rpCalls().length, 0);
   } finally { await app.close(); }
   const dev = await startApp({ F, extend, options: { bypassAuth: true } });
@@ -94,5 +94,83 @@ test('callIdp: refreshes a near-expiry session before calling', async () => {
     const r = await (await a.req('/mint', { method: 'POST' })).json();
     assert.equal(r.status, 201);
     assert.ok(F.calls.filter((c) => c.path === '/token').length > before, 'refresh grant was used');
+  } finally { await app.close(); }
+});
+
+// requireAuth already refreshes a near-expiry session before the route handler runs, so the test
+// above alone doesn't prove callIdp has its own refresh check — a route that advances the clock
+// only *inside* the handler (after requireAuth has already passed) does.
+test('callIdp: refreshes its own near-expiry session, not only the one requireAuth already refreshed', async () => {
+  const clock = { t: Date.now() };
+  let advance = false;
+  const extend2 = (app, auth) => {
+    app.post('/mint2', auth.requireAuth, async (req, res, next) => {
+      try {
+        if (advance) clock.t += (F.accessTtl - 10) * 1000; // inside REFRESH_SKEW_MS, but only now — after requireAuth ran
+        res.json(await auth.callIdp(req, 'POST', '/rp/device-keys', { kind: 'location-ingest', label: 'Phone' }));
+      } catch (e) { next(e); }
+    });
+  };
+  const app = await startApp({ F, extend: extend2, options: { now: () => clock.t } });
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F);
+    const r1 = await (await a.req('/mint2', { method: 'POST' })).json();
+    assert.equal(r1.status, 201);
+    const bearer1 = rpCalls().at(-1).headers.authorization;
+    const tokenCallsBefore = F.calls.filter((c) => c.path === '/token').length;
+
+    advance = true;
+    const r2 = await (await a.req('/mint2', { method: 'POST' })).json();
+    assert.equal(r2.status, 201);
+    const bearer2 = rpCalls().at(-1).headers.authorization;
+
+    assert.notEqual(bearer2, bearer1, 'pwiam must have received the freshly refreshed access token');
+    assert.ok(F.calls.filter((c) => c.path === '/token').length > tokenCallsBefore, 'callIdp performed its own refresh grant');
+  } finally { await app.close(); }
+});
+
+test('callIdp: its own refresh being rejected (invalid_grant) throws OidcError(invalid_grant)', async () => {
+  const clock = { t: Date.now() };
+  const extend2 = (app, auth) => {
+    app.post('/mint2', auth.requireAuth, async (req, res) => {
+      try {
+        clock.t += (F.accessTtl - 10) * 1000; // inside REFRESH_SKEW_MS, only after requireAuth ran
+        res.json(await auth.callIdp(req, 'POST', '/rp/device-keys', { kind: 'location-ingest' }));
+      } catch (e) { res.status(499).json({ kind: e.kind, message: e.message }); }
+    });
+  };
+  const app = await startApp({ F, extend: extend2, options: { now: () => clock.t } });
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F);
+    const rt = [...F.refresh.keys()].at(-1); // the token just issued for this login
+    F.refresh.get(rt).used = true; // forces reuse detection -> invalid_grant on the next refresh grant
+    const r = await (await a.req('/mint2', { method: 'POST' })).json();
+    assert.equal(r.kind, 'invalid_grant');
+    assert.match(r.message, /session expired/);
+  } finally { await app.close(); }
+});
+
+test('callIdp: a stale session past actual access-token expiry (issuer unreachable) throws OidcError(issuer_error), never sends an expired bearer', async () => {
+  const clock = { t: Date.now() };
+  const extend2 = (app, auth) => {
+    app.post('/mint2', auth.requireAuth, async (req, res) => {
+      try {
+        // past the ACTUAL expiry, not just the refresh skew, and the issuer is down for the whole window
+        clock.t += (F.accessTtl + 5) * 1000;
+        res.json(await auth.callIdp(req, 'POST', '/rp/device-keys', { kind: 'location-ingest' }));
+      } catch (e) { res.status(499).json({ kind: e.kind, message: e.message }); }
+    });
+  };
+  const app = await startApp({ F, extend: extend2, options: { now: () => clock.t } });
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F);
+    F.fail.add('token'); // pwiam unreachable for the refresh grant
+    const r = await (await a.req('/mint2', { method: 'POST' })).json();
+    assert.equal(r.kind, 'issuer_error');
+    assert.match(r.message, /could not be refreshed/);
+    assert.equal(rpCalls().length, 0, 'no call carrying an expired bearer ever reached pwiam');
   } finally { await app.close(); }
 });
