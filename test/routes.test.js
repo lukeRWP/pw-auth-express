@@ -192,3 +192,81 @@ test('return_to that is not a same-origin path is dropped: never reaches the aut
     }
   } finally { await app.close(); }
 });
+
+test('secure config: login + callback issue __Host--prefixed cookies with Secure/HttpOnly/Path=//no Domain; logout clears both', async () => {
+  const app = await startApp({ F, options: { cookie: { secure: true } } });
+  try {
+    const a = agent(app.baseUrl);
+    const login = await a.req('/api/auth/login', { headers: { accept: 'text/html' } });
+    const stateCookie = login.headers.getSetCookie().find((c) => c.startsWith('__Host-pw_auth_state='));
+    assert.ok(stateCookie, 'state cookie uses the __Host- name');
+    assert.match(stateCookie, /^__Host-pw_auth_state=.+; Max-Age=300; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
+    assert.ok(!login.headers.getSetCookie().some((c) => c.startsWith('pw_auth_state=')), 'no bare-name state cookie is ever set');
+
+    const cb = await a.req(await F.authorize(login.headers.get('location')), { headers: { accept: 'text/html' } });
+    assert.equal(cb.status, 302); assert.equal(cb.headers.get('location'), '/');
+    const cbCookies = cb.headers.getSetCookie();
+    assert.ok(cbCookies.some((c) => /^__Host-pw_auth_state=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/.test(c)), 'state cookie cleared on use');
+    const sess = cbCookies.find((c) => c.startsWith('__Host-session_token='));
+    assert.match(sess, /^__Host-session_token=[0-9a-f]{64}\.[A-Za-z0-9_-]+; Max-Age=86400; Path=\/; HttpOnly; Secure; SameSite=Lax$/);
+    assert.ok(!cbCookies.some((c) => c.startsWith('session_token=')), 'no bare-name session cookie is ever set');
+
+    assert.equal((await a.req('/api/me')).status, 200, 'the __Host--named session works for requireAuth');
+
+    const out = await a.req('/api/auth/logout', { method: 'POST', headers: { accept: 'text/html' } });
+    const outCookies = out.headers.getSetCookie();
+    assert.ok(outCookies.some((c) => /^__Host-session_token=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/.test(c)), 'logout clears the current name');
+    assert.ok(outCookies.some((c) => /^session_token=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/.test(c)), 'logout also clears the pre-0.4.0 bare name');
+    assert.equal((await a.req('/api/me')).status, 401);
+  } finally { await app.close(); }
+});
+
+test('secure config, migration: a login started on the pre-0.4.0 bare-name state cookie still completes after the upgrade (CSRF double-submit survives the boundary), then both names are cleared', async () => {
+  const app = await startApp({ F, options: { cookie: { secure: true } } });
+  try {
+    const a = agent(app.baseUrl);
+    const login = await a.req('/api/auth/login', { headers: { accept: 'text/html' } });
+    // Simulate a login that started on a pre-upgrade deploy: the sealed value is unchanged (the
+    // seal/open scheme didn't change, only the cookie's name did), it just arrived under the old
+    // bare name rather than today's __Host- name.
+    const sealedState = a.jar.get('__Host-pw_auth_state');
+    assert.ok(sealedState);
+    a.jar.delete('__Host-pw_auth_state');
+    a.jar.set('pw_auth_state', sealedState);
+
+    const cb = await a.req(await F.authorize(login.headers.get('location')), { headers: { accept: 'text/html' } });
+    assert.equal(cb.status, 302); assert.equal(cb.headers.get('location'), '/', 'the legacy-named state cookie was still honoured');
+    const cbCookies = cb.headers.getSetCookie();
+    assert.ok(cbCookies.some((c) => /^__Host-pw_auth_state=; Max-Age=0/.test(c)));
+    assert.ok(cbCookies.some((c) => /^pw_auth_state=; Max-Age=0/.test(c)), 'the legacy state cookie is swept up too');
+    assert.ok(cbCookies.some((c) => c.startsWith('__Host-session_token=')));
+    assert.equal((await a.req('/api/me')).status, 200);
+  } finally { await app.close(); }
+});
+
+test('secure config, migration: a pre-0.4.0 bare-name session cookie is silently replaced via pwiam SSO, not trusted outright', async () => {
+  const app = await startApp({ F, options: { cookie: { secure: true } } });
+  try {
+    const a = agent(app.baseUrl);
+    await loginVia(a, F); // establishes a normal __Host-session_token session
+    const current = a.jar.get('__Host-session_token');
+    assert.ok(current);
+    // Simulate a browser that still carries a pre-upgrade cookie under the bare name instead
+    a.jar.delete('__Host-session_token');
+    a.jar.set('session_token', current);
+
+    const denied = await a.req('/api/me');
+    assert.equal(denied.status, 401, 'the bare-name cookie is not trusted as a live session');
+
+    // the fake issuer plays the role of an already-authenticated pwiam session: the redirect round
+    // trip succeeds without the user re-entering credentials ("silent through SSO")
+    const html = await a.req('/page', { headers: { accept: 'text/html' } });
+    assert.equal(html.status, 302); // → the app's own /api/auth/login?return_to=%2Fpage
+    const toIssuer = await a.req(html.headers.get('location'), { headers: { accept: 'text/html' } });
+    assert.equal(toIssuer.status, 302); // → the issuer's /authorize
+    const afterSso = await a.req(await F.authorize(toIssuer.headers.get('location')), { headers: { accept: 'text/html' } });
+    assert.equal(afterSso.status, 302); assert.equal(afterSso.headers.get('location'), '/page');
+    assert.ok(a.jar.get('__Host-session_token'), 'a fresh __Host- session is issued');
+    assert.equal((await a.req('/api/me')).status, 200);
+  } finally { await app.close(); }
+});

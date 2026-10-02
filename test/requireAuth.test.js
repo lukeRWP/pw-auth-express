@@ -15,14 +15,14 @@ before(async () => { F = await startFakeIssuer(); oidc = createOidc({ issuer: F.
 after(() => F.close());
 beforeEach(() => { F.calls.length = 0; F.fail.clear(); F.user.roles = ['user']; F.refreshIdToken = true; });
 
-function makeCtx({ resolveUser, bypassAuth = false } = {}) {
+function makeCtx({ resolveUser, bypassAuth = false, secure = false } = {}) {
   const keys = deriveKeys('s3cret'.padEnd(32, '.'));
   const adapter = memorySession();
   const store = createSessionStore({ adapter, sealKey: keys.sealKey });
   const clock = { t: Date.now() };
   const calls = [];
   const o = {
-    cookie: { name: 'session_token', secure: false }, routePrefix: '/api/auth', bypassAuth, sessionMaxAge: DAY, now: () => clock.t,
+    cookie: { name: 'session_token', secure }, routePrefix: '/api/auth', bypassAuth, sessionMaxAge: DAY, now: () => clock.t,
     resolveUser: resolveUser || (async (c) => { calls.push(c); return { id: 42, name: c.name, roles: c.roles }; }),
   };
   const logs = [];
@@ -78,6 +78,31 @@ test('bad signature / unknown token → 401 and the cookie is cleared', async ()
   const s = await seed(t);
   const r2 = await run(t.mw.requireAuth, { cookie: `session_token=${signValue(deriveKeys('other'.padEnd(32, '.')).cookieKey, s.token)}` });
   assert.equal(r2.status, 401);
+});
+
+test('secure config: the session cookie is read under its __Host- name', async () => {
+  const t = makeCtx({ secure: true });
+  const s = await seed(t);
+  const signed = signValue(t.keys.cookieKey, s.token);
+  const r = await run(t.mw.requireAuth, { cookie: `__Host-session_token=${signed}` });
+  assert.equal(r.next, true); assert.equal(r.req.pwSession.token, s.token);
+});
+
+test('secure config: a pre-0.4.0 bare-name cookie is treated as absent (silent re-auth via pwiam SSO, not trusted outright) but is cleared under both names', async () => {
+  const t = makeCtx({ secure: true });
+  const s = await seed(t);
+  const signed = signValue(t.keys.cookieKey, s.token);
+  const r = await run(t.mw.requireAuth, { cookie: `session_token=${signed}` });
+  assert.equal(r.status, 401);
+  const cleared = r.headers['set-cookie'];
+  assert.ok(cleared.some((c) => /^__Host-session_token=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/.test(c)), 'current name cleared');
+  assert.ok(cleared.some((c) => /^session_token=; Max-Age=0; Path=\/; HttpOnly; Secure; SameSite=Lax$/.test(c)), 'legacy name cleared');
+});
+
+test('secure config: no cookie at all → 401 with no Set-Cookie (nothing to clear)', async () => {
+  const t = makeCtx({ secure: true });
+  const r = await run(t.mw.requireAuth, {});
+  assert.equal(r.status, 401); assert.equal(r.headers['set-cookie'], undefined);
 });
 
 test('valid session with a live access token → next(), req.user/req.auth set, issuer not called', async () => {
