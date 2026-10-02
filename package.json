@@ -1,6 +1,6 @@
 {
   "name": "@pw/auth-express",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Express auth shim for pwiam: OIDC code+PKCE login, app sessions with silent refresh, back-channel logout, step-up, API-key introspection",
   "main": "index.js",
   "files": ["index.js", "lib/"],

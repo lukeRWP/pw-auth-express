@@ -9,7 +9,7 @@ Spec: `prevailing-winds/docs/superpowers/specs/2026-09-08-pw-iam-design.md` §7.
 Consumed as a git tag (no registry):
 
 ```json
-"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.2.0" }
+"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.4.0" }
 ```
 
 Node ≥ 22.12, Express 4 or 5.
@@ -56,11 +56,40 @@ async function resolveUser(c) {
 | `routePrefix` | `/api/auth` | |
 | `postLoginRedirect` / `loginErrorRedirect` / `postLogoutRedirect` | `/`, `/login?error=auth_failed`, `/` | |
 | `sessionMaxAge` | 86400000 (24 h) | cookie + row lifetime; pwiam's refresh token (30 d) outlives it |
-| `cookie` | `{ name: 'session_token', secure: true }` | |
+| `cookie` | `{ name: 'session_token', secure: true }` | `secure: false` only for local http — see Cookies below |
 | `bypassAuth` | `process.env.BYPASS_AUTH === 'true'` | dev only: `req.user = resolveUser(DEV_CLAIMS)`, `/login` → 503 |
 | `timeoutSec` | `10` | per-request timeout on every call to pwiam (discovery, token, introspection, upstream) |
 | `logger` | `console` | needs `info/warn/error` |
 | `now`, `fetch`, `allowInsecure` | `Date.now`, global, `false` | test hooks |
+
+## Cookies
+
+Two cookies, both named/set/cleared through one helper (`lib/cookies.js`): the session cookie
+(`cookie.name`, default `session_token`) and the OIDC state/PKCE/CSRF-double-submit cookie
+(`pw_auth_state`, fixed). When `cookie.secure` is true (the default — production), both carry the
+`__Host-` prefix: `__Host-session_token`, `__Host-pw_auth_state`. Browsers enforce `__Host-` by
+refusing the cookie unless the response also sets `Secure`, `Path=/` and omits `Domain` — which in
+exchange guarantees that no sibling (sub)domain, and nothing else able to set a cookie for the
+shared parent domain, can toss or fixate either one. With `cookie.secure: false` (local http,
+`__Host-` cookies are rejected by browsers outright), both keep their plain, unprefixed names.
+
+Upgrading a deployment past 0.4.0 crosses a cookie rename, handled per cookie:
+
+- The **session cookie** treats a pre-0.4.0 bare-name cookie as absent rather than trusting its
+  value — the user is silently re-authenticated through pwiam SSO (the login redirect round-trips
+  without them re-entering credentials).
+- The **state/CSRF cookie** accepts one read of the pre-0.4.0 bare name when the current name is
+  absent, so a login started just before an upgrade still completes when its callback lands just
+  after — there's no SSO fallback for a lost mid-flight login, only a dead-end error page.
+- Either way, both names get cleared (logout, a rejected session, or once the state cookie is
+  consumed) so a stale pre-0.4.0 cookie never lingers in the browser.
+
+**If your app's own CSRF middleware decides "is there a session" by checking the literal
+`session_token` cookie name** (as tally's, docket's, daybook's and blueprint's all do today), update
+that check to the `__Host-` name alongside — not before, not after — bumping that app's pin past
+0.4.0 in production. Otherwise the check always reads "no session" once this shim starts naming the
+cookie `__Host-session_token`, and CSRF validation silently stops running for every state-changing
+request. This failure mode is entirely in the consuming app; this package's tests cannot see it.
 
 ## API keys
 
