@@ -9,7 +9,7 @@ Spec: `prevailing-winds/docs/superpowers/specs/2026-09-08-pw-iam-design.md` §7.
 Consumed as a git tag (no registry):
 
 ```json
-"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.4.0" }
+"dependencies": { "@pw/auth-express": "github:lukeRWP/pw-auth-express#v0.4.1" }
 ```
 
 Node ≥ 22.12, Express 4 or 5.
@@ -169,7 +169,7 @@ issuer's base URL and rejects it, with a fixed message that never echoes the pat
 `%2e`, `%2f` or `%5c` (case-insensitive — blocks percent-encoded and backslash traversal); none of
 its `/`-separated segments (before any `?`) is `.` or `..`; and the resolved URL's origin and path
 prefix still land inside `<issuer>/rp/`. Anything that fails any of those throws
-`Error('pw-auth: callIdp: invalid path')`. `method` must be one of `GET`/`POST`/`PUT`/`PATCH`/`DELETE`
+`Error('pw-auth: callIdp: invalid path')`. `method` must be one of `GET`/`POST`/`PUT`/`PATCH`/`DELETE` (case-insensitive)
 (anything else throws `Error('pw-auth: callIdp: unsupported method')`), and a `GET` may not carry a
 `body` (throws `Error('pw-auth: callIdp: GET requests cannot carry a body')`).
 
