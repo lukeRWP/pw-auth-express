@@ -18,7 +18,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
 
   const F = {
     issuer, jwk, clientId, clientSecret, accessTtl,
-    calls: [], fail: new Set(), refreshIdToken: true, ignoreAcr: false, rp: { status: 201 },
+    calls: [], all: [], fail: new Set(), refreshIdToken: true, ignoreAcr: false, rp: { status: 201 },
     user: { sub: '01HUSERAAAAAAAAAAAAAAAAAAA', name: 'Ada Lovelace', email: 'ada@example.com', roles: ['user'], entra_oid: 'oid-ada' },
     apiKeys: new Map(),
     codes: new Map(),     // code -> { challenge, redirectUri, nonce, acr, amr, authTime, sid }
@@ -97,6 +97,7 @@ async function startFakeIssuer({ clientId = 'tally-prod', clientSecret = 'cs-sec
     const url = new URL(req.url, issuer);
     const path = url.pathname;
     const query = Object.fromEntries(url.searchParams);
+    F.all.push({ method: req.method, path }); // every request, known path or not (calls only records some)
 
     if (req.method === 'GET' && path === '/.well-known/openid-configuration') {
       return json(res, 200, {

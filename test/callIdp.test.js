@@ -7,7 +7,7 @@ const { startApp, agent, loginVia } = require('./helpers/app');
 let F;
 before(async () => { F = await startFakeIssuer(); });
 after(() => F.close());
-beforeEach(() => { F.calls.length = 0; F.fail.clear(); F.rp = { status: 201 }; });
+beforeEach(() => { F.calls.length = 0; F.all.length = 0; F.fail.clear(); F.rp = { status: 201 }; });
 
 const extend = (app, auth) => {
   app.post('/mint', auth.requireAuth, async (req, res, next) => {
@@ -70,16 +70,19 @@ test('callIdp: refuses non-/rp/ paths and requires a user session', async () => 
   try {
     const a = agent(app.baseUrl);
     await loginVia(a, F);
+    const before = F.all.length;
     const r = await a.req('/elsewhere');
     assert.equal(r.status, 500);
     assert.match((await r.json()).message, /invalid path/);
-    assert.equal(rpCalls().length, 0);
+    assert.equal(F.all.length, before, 'no request of any path reached the issuer');
   } finally { await app.close(); }
+  F.all.length = 0;
   const dev = await startApp({ F, extend, options: { bypassAuth: true } });
   try {
     const r = await agent(dev.baseUrl).req('/mint', { method: 'POST' });
     assert.equal(r.status, 500);
     assert.match((await r.json()).message, /no user session/);
+    assert.equal(F.all.length, 0, 'no request of any path reached the issuer');
   } finally { await dev.close(); }
 });
 
@@ -173,4 +176,26 @@ test('callIdp: a stale session past actual access-token expiry (issuer unreachab
     assert.match(r.message, /could not be refreshed/);
     assert.equal(rpCalls().length, 0, 'no call carrying an expired bearer ever reached pwiam');
   } finally { await app.close(); }
+});
+
+const { createOidc } = require('../lib/oidc');
+const rpOidc = (fetch) => createOidc({ issuer: 'http://127.0.0.1:1', clientId: 'x', clientSecret: 'y', allowInsecure: true, fetch });
+
+test('callIdp: a 3xx cancels its body (frees the socket) and returns no body or location', async () => {
+  let cancelled = false;
+  const body = new ReadableStream({ cancel() { cancelled = true; } });
+  const oidc = rpOidc(async () => new Response(body, { status: 302, headers: { location: 'http://evil.example/steal' } }));
+  assert.deepEqual(await oidc.rpCall({ method: 'GET', path: '/rp/device-keys', accessToken: 't' }), { status: 302, body: null });
+  assert.equal(cancelled, true);
+});
+
+test('callIdp: the method is case-insensitive, normalised to uppercase on the wire', async () => {
+  const seen = [];
+  const oidc = rpOidc(async (href, init) => { seen.push(init.method); return new Response(null, { status: 204 }); });
+  assert.deepEqual(await oidc.rpCall({ method: 'post', path: '/rp/device-keys', accessToken: 't', body: {} }), { status: 204, body: null });
+  assert.deepEqual(seen, ['POST']);
+  await assert.rejects(() => oidc.rpCall({ method: 'get', path: '/rp/x', accessToken: 't', body: {} }), /GET requests cannot carry a body/);
+  await assert.rejects(() => oidc.rpCall({ method: 'trace', path: '/rp/x', accessToken: 't' }), /unsupported method/);
+  await assert.rejects(() => oidc.rpCall({ method: undefined, path: '/rp/x', accessToken: 't' }), /unsupported method/);
+  assert.equal(seen.length, 1);
 });

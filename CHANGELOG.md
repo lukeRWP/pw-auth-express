@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.1
+
+`callIdp` hygiene (#4); public API unchanged.
+
+- A 3xx from pwiam now has its body cancelled, so the socket is released rather than held until GC.
+- The `method` argument is case-insensitive (`'post'` works, sent as `POST`); anything else still
+  throws `unsupported method`.
+- Tests: the "makes no request" checks now count every request the fake issuer receives, not just `/rp/` ones.
+
 ## 0.4.0
 
 Security hardening (M8): every cookie this shim sets now uses the `__Host-` prefix when configured
