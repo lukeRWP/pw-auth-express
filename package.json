@@ -10,5 +10,5 @@
   "scripts": { "test": "node --test --test-timeout=30000" },
   "dependencies": { "cookie": "^1.1.1", "jose": "^6.2.12", "openid-client": "^6.8.8" },
   "peerDependencies": { "express": ">=4.19 <6" },
-  "devDependencies": { "express": "^4.21.2" }
+  "devDependencies": { "express": "^4.22.3" }
 }
