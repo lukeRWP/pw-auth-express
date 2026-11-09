@@ -1,0 +1,37 @@
+version: 2
+
+# Same policy as prevailing-winds and pwiam (CI/CD review 2026-11-09: this repo had no
+# dependency automation). `cooldown`: never propose a version published in the last
+# 7 days; compromised npm releases are usually caught and yanked within hours.
+# Security updates still bypass the schedule (repo setting).
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      ci-actions:
+        patterns: ["*"]
+
+  # cookie, jose and openid-client ship inside every app that uses this library, so
+  # their fixes reach the apps only through a release here. Minor+patch grouped;
+  # majors arrive alone for a human read.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:00"
+      timezone: UTC
+    open-pull-requests-limit: 5
+    cooldown:
+      default-days: 7
+    groups:
+      npm-minor-patch:
+        update-types: ["minor", "patch"]
