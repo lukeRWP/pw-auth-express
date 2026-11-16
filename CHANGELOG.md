@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.4.2
+
+Dependency upgrade; public API and cookie behaviour unchanged.
+
+- `cookie` 1 → 2. v2 renamed its API (`parse` → `parseCookie`, `serialize(name, value, opts)` →
+  `stringifySetCookie({ name, value, ...opts })`) and ships as ESM, loaded through Node's `require(esm)`
+  (already covered by `engines` `>=22.12`). `lib/cookies.js` is the only caller; the emitted
+  `Set-Cookie` strings are byte-identical.
+- devDependency `express` 4 → 5 (CI still tests both majors; the peer range is unchanged).
+
 ## 0.4.1
 
 `callIdp` hygiene (#4); public API unchanged.
